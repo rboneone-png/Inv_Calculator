@@ -28,4 +28,16 @@ class CalculationsTest {
         val r = Calculations.loan(100000.0, 12.0, 1.0)
         assertEquals(8884.88, r.monthlyPayment, 0.01)
     }
+
+    @Test
+    fun loanByMonths_matchesYears() {
+        val r = Calculations.loanByMonths(100000.0, 12.0, 12)
+        assertEquals(8884.88, r.monthlyPayment, 0.01)
+    }
+
+    @Test
+    fun remainingBalance_startAndEnd() {
+        assertEquals(100000.0, Calculations.remainingBalance(100000.0, 12.0, 12, 0), 0.01)
+        assertEquals(0.0, Calculations.remainingBalance(100000.0, 12.0, 12, 12), 0.01)
+    }
 }

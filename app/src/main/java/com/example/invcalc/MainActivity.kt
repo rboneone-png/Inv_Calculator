@@ -5,6 +5,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -13,6 +14,11 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -30,6 +36,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import java.util.Locale
+import kotlin.math.roundToLong
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -182,25 +189,105 @@ fun ReturnScreen() {
     }
 }
 
+private val loanTypes = listOf("房貸", "信貸", "車貸", "其他")
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LoanScreen() {
-    var amount by rememberSaveable { mutableStateOf("1000000") }
-    var rate by rememberSaveable { mutableStateOf("2.5") }
-    var years by rememberSaveable { mutableStateOf("20") }
+    var type by rememberSaveable { mutableStateOf(loanTypes[0]) }
+    var name by rememberSaveable { mutableStateOf("") }
+    var amount by rememberSaveable { mutableStateOf("") }
+    var rate by rememberSaveable { mutableStateOf("") }
+    var months by rememberSaveable { mutableStateOf("") }
+    var paid by rememberSaveable { mutableStateOf("0") }
+    var day by rememberSaveable { mutableIntStateOf(5) }
+    var dayExpanded by remember { mutableStateOf(false) }
+
+    val a = amount.num()
+    val r = rate.num()
+    val n = months.toIntOrNull()
+    val k = paid.toIntOrNull()
+    val result =
+        if (a != null && r != null && n != null && k != null &&
+            a > 0 && r >= 0 && n > 0 && k in 0..n
+        ) Calculations.loanByMonths(a, r, n) else null
+
     ScreenColumn {
-        NumField("貸款金額", amount) { amount = it }
-        NumField("年利率 (%)", rate) { rate = it }
-        NumField("貸款年數", years) { years = it }
-        val a = amount.num(); val r = rate.num(); val y = years.num()
-        ResultCard(
-            if (a == null || r == null || y == null || a <= 0 || r < 0 || (y * 12).toInt() <= 0) null
-            else Calculations.loan(a, r, y).let {
-                listOf(
-                    "每月還款（本息平均攤還）" to money(it.monthlyPayment),
-                    "還款總額" to money(it.totalPayment),
-                    "利息總額" to money(it.totalInterest)
-                )
+        Text("貸款型式", style = MaterialTheme.typography.titleMedium)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            loanTypes.forEach { t ->
+                FilterChip(selected = type == t, onClick = { type = t }, label = { Text(t) })
             }
+        }
+        OutlinedTextField(
+            value = name,
+            onValueChange = { name = it },
+            label = { Text("名稱／備註（選填）") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
         )
+        NumField("貸款金額（元）", amount) { amount = it }
+        NumField("利率（年利率 %）", rate) { rate = it }
+        OutlinedTextField(
+            value = months,
+            onValueChange = { months = it.filter(Char::isDigit) },
+            label = { Text("貸款期數（每月一期）") },
+            supportingText = { Text("例如 20 年 = 240 期") },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            modifier = Modifier.fillMaxWidth()
+        )
+        OutlinedTextField(
+            value = paid,
+            onValueChange = { paid = it.filter(Char::isDigit) },
+            label = { Text("已繳期數") },
+            supportingText = { Text("建立時已繳的期數；之後每個繳款日自動再繳一期") },
+            isError = n != null && k != null && k > n,
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            modifier = Modifier.fillMaxWidth()
+        )
+        OutlinedTextField(
+            value = result?.let { String.format(Locale.US, "%,d", it.monthlyPayment.roundToLong()) } ?: "",
+            onValueChange = {},
+            readOnly = true,
+            label = { Text("每月繳款（自動計算，元）") },
+            supportingText = {
+                Text("本息平均攤還：貸款金額、利率、期數算出每月固定金額，四捨五入到整數")
+            },
+            modifier = Modifier.fillMaxWidth()
+        )
+        ExposedDropdownMenuBox(
+            expanded = dayExpanded,
+            onExpandedChange = { dayExpanded = it },
+            modifier = Modifier.fillMaxWidth(0.78f)
+        ) {
+            OutlinedTextField(
+                value = "$day 日",
+                onValueChange = {},
+                readOnly = true,
+                label = { Text("繳款日（每月幾號）") },
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = dayExpanded) },
+                modifier = Modifier.menuAnchor().fillMaxWidth()
+            )
+            ExposedDropdownMenu(expanded = dayExpanded, onDismissRequest = { dayExpanded = false }) {
+                (1..31).forEach { d ->
+                    DropdownMenuItem(
+                        text = { Text("$d 日") },
+                        onClick = { day = d; dayExpanded = false }
+                    )
+                }
+            }
+        }
+        if (result != null && a != null && r != null && n != null && k != null) {
+            ResultCard(
+                listOf(
+                    "還款總額" to money(result.totalPayment),
+                    "利息總額" to money(result.totalInterest),
+                    "剩餘期數" to "${n - k} 期",
+                    "剩餘本金" to money(Calculations.remainingBalance(a, r, n, k).coerceAtLeast(0.0))
+                )
+            )
+        }
     }
 }
