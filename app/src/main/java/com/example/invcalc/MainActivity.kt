@@ -3,6 +3,7 @@ package com.example.invcalc
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -10,6 +11,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -28,6 +31,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -36,6 +40,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import java.util.Locale
+import kotlinx.coroutines.launch
 import kotlin.math.roundToLong
 
 class MainActivity : ComponentActivity() {
@@ -53,25 +58,34 @@ class MainActivity : ComponentActivity() {
 
 private val tabs = listOf("複利", "定期定額", "報酬率", "貸款")
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun App() {
-    var tab by rememberSaveable { mutableIntStateOf(0) }
+    val pagerState = rememberPagerState(pageCount = { tabs.size })
+    val scope = rememberCoroutineScope()
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
         Text(
             "投資計算機",
             style = MaterialTheme.typography.titleLarge,
             modifier = Modifier.padding(16.dp)
         )
-        TabRow(selectedTabIndex = tab) {
+        TabRow(selectedTabIndex = pagerState.currentPage) {
             tabs.forEachIndexed { i, title ->
-                Tab(selected = tab == i, onClick = { tab = i }, text = { Text(title) })
+                Tab(
+                    selected = pagerState.currentPage == i,
+                    onClick = { scope.launch { pagerState.animateScrollToPage(i) } },
+                    text = { Text(title) }
+                )
             }
         }
-        when (tab) {
-            0 -> CompoundScreen()
-            1 -> DcaScreen()
-            2 -> ReturnScreen()
-            else -> LoanScreen()
+        // 左右滑動切換分頁
+        HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
+            when (page) {
+                0 -> CompoundScreen()
+                1 -> DcaScreen()
+                2 -> ReturnScreen()
+                else -> LoanScreen()
+            }
         }
     }
 }
