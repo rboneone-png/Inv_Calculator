@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 三根上升長條（投資成長） -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M35,58h11v16h-11z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M48.5,48h11v26h-11z" />
+    <path
+        android:fillColor="#FFD54F"
+        android:pathData="M62,36h11v38h-11z" />
+    <!-- 底線 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M32,77h44v3h-44z" />
+</vector>
