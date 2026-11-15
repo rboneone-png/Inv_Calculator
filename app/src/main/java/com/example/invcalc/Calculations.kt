@@ -1,6 +1,7 @@
 package com.example.invcalc
 
 import kotlin.math.pow
+import kotlin.math.roundToInt
 
 /** 純計算邏輯（不依賴 Android），方便單元測試。 */
 object Calculations {
@@ -38,12 +39,26 @@ object Calculations {
 
     data class LoanResult(val monthlyPayment: Double, val totalPayment: Double, val totalInterest: Double)
 
-    /** 貸款：本息平均攤還。 */
-    fun loan(amount: Double, ratePct: Double, years: Double): LoanResult {
-        val n = (years * 12).toInt()
+    /** 貸款：本息平均攤還（以年數輸入）。 */
+    fun loan(amount: Double, ratePct: Double, years: Double): LoanResult =
+        loanByMonths(amount, ratePct, (years * 12).roundToInt())
+
+    /** 貸款：本息平均攤還（以期數輸入，每月一期）。 */
+    fun loanByMonths(amount: Double, ratePct: Double, months: Int): LoanResult {
         val i = ratePct / 100.0 / 12.0
-        val payment = if (i == 0.0) amount / n else amount * i * (1 + i).pow(n) / ((1 + i).pow(n) - 1)
-        val total = payment * n
+        val payment =
+            if (i == 0.0) amount / months
+            else amount * i * (1 + i).pow(months) / ((1 + i).pow(months) - 1)
+        val total = payment * months
         return LoanResult(payment, total, total - amount)
+    }
+
+    /** 已繳 paid 期後的剩餘本金。 */
+    fun remainingBalance(amount: Double, ratePct: Double, months: Int, paid: Int): Double {
+        val i = ratePct / 100.0 / 12.0
+        val payment = loanByMonths(amount, ratePct, months).monthlyPayment
+        if (i == 0.0) return amount - payment * paid
+        val g = (1 + i).pow(paid)
+        return amount * g - payment * (g - 1) / i
     }
 }
