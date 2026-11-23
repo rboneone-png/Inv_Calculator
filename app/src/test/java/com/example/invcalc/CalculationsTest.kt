@@ -40,4 +40,16 @@ class CalculationsTest {
         assertEquals(100000.0, Calculations.remainingBalance(100000.0, 12.0, 12, 0), 0.01)
         assertEquals(0.0, Calculations.remainingBalance(100000.0, 12.0, 12, 12), 0.01)
     }
+
+    @Test
+    fun grid_basic() {
+        val r = Calculations.grid(120.0, 100.0, 4, 4000.0)
+        assertEquals(5.0, r.step, 0.0001)
+        assertEquals(1000.0, r.perGridCapital, 0.0001)
+        assertEquals(4, r.levels.size)
+        assertEquals(100.0, r.levels[0].buyPrice, 0.0001)
+        assertEquals(105.0, r.levels[0].sellPrice, 0.0001)
+        assertEquals(50.0, r.levels[0].profit, 0.0001)
+        assertEquals(186.55, r.totalProfit, 0.01)
+    }
 }
