@@ -56,7 +56,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private val tabs = listOf("複利", "定期定額", "報酬率", "貸款")
+private val tabs = listOf("複利", "定期定額", "報酬率", "貸款", "蛛網")
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -84,7 +84,8 @@ fun App() {
                 0 -> CompoundScreen()
                 1 -> DcaScreen()
                 2 -> ReturnScreen()
-                else -> LoanScreen()
+                3 -> LoanScreen()
+                else -> GridScreen()
             }
         }
     }
@@ -302,6 +303,64 @@ fun LoanScreen() {
                     "剩餘本金" to money(Calculations.remainingBalance(a, r, n, k).coerceAtLeast(0.0))
                 )
             )
+        }
+    }
+}
+
+@Composable
+fun GridScreen() {
+    var upper by rememberSaveable { mutableStateOf("120") }
+    var lower by rememberSaveable { mutableStateOf("100") }
+    var grids by rememberSaveable { mutableStateOf("10") }
+    var capital by rememberSaveable { mutableStateOf("100000") }
+    ScreenColumn {
+        Text(
+            "蛛網（網格）投資：把價格區間切成多格，每跌一格買進、漲一格賣出，賺取區間震盪的價差。",
+            style = MaterialTheme.typography.bodyMedium
+        )
+        NumField("價格上限", upper) { upper = it }
+        NumField("價格下限", lower) { lower = it }
+        OutlinedTextField(
+            value = grids,
+            onValueChange = { grids = it.filter(Char::isDigit) },
+            label = { Text("格數") },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            modifier = Modifier.fillMaxWidth()
+        )
+        NumField("投入總資金", capital) { capital = it }
+        val u = upper.num(); val l = lower.num(); val g = grids.toIntOrNull(); val c = capital.num()
+        if (u == null || l == null || g == null || c == null || l <= 0 || u <= l || g !in 1..200 || c <= 0) {
+            ResultCard(null)
+        } else {
+            val r = Calculations.grid(u, l, g, c)
+            ResultCard(
+                listOf(
+                    "每格價差" to money(r.step),
+                    "每格資金" to money(r.perGridCapital),
+                    "單格報酬率（每完成一次買賣）" to
+                        "${pct(r.minRatePct)} ～ ${pct(r.maxRatePct)}",
+                    "價格由下限漲到上限的總獲利" to money(r.totalProfit)
+                )
+            )
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row {
+                        Text("買進價", Modifier.weight(1f), style = MaterialTheme.typography.labelMedium)
+                        Text("賣出價", Modifier.weight(1f), style = MaterialTheme.typography.labelMedium)
+                        Text("買進數量", Modifier.weight(1f), style = MaterialTheme.typography.labelMedium)
+                        Text("單格獲利", Modifier.weight(1f), style = MaterialTheme.typography.labelMedium)
+                    }
+                    r.levels.forEach { lv ->
+                        Row {
+                            Text(money(lv.buyPrice), Modifier.weight(1f))
+                            Text(money(lv.sellPrice), Modifier.weight(1f))
+                            Text(String.format(Locale.US, "%.2f", lv.quantity), Modifier.weight(1f))
+                            Text(money(lv.profit), Modifier.weight(1f))
+                        }
+                    }
+                }
+            }
         }
     }
 }

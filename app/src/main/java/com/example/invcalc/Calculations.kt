@@ -61,4 +61,31 @@ object Calculations {
         val g = (1 + i).pow(paid)
         return amount * g - payment * (g - 1) / i
     }
+
+    data class GridLevel(val buyPrice: Double, val sellPrice: Double, val quantity: Double, val profit: Double)
+
+    data class GridResult(
+        val step: Double,
+        val perGridCapital: Double,
+        val levels: List<GridLevel>,
+        val totalProfit: Double,
+        val minRatePct: Double,
+        val maxRatePct: Double
+    )
+
+    /**
+     * 蛛網（網格）投資：價格區間 [lower, upper] 等分成 grids 格，
+     * 資金平均分配，每格在該格下緣買進、上緣賣出。
+     */
+    fun grid(upper: Double, lower: Double, grids: Int, capital: Double): GridResult {
+        val step = (upper - lower) / grids
+        val perGrid = capital / grids
+        val levels = (0 until grids).map { k ->
+            val buy = lower + step * k
+            val qty = perGrid / buy
+            GridLevel(buy, buy + step, qty, qty * step)
+        }
+        val rates = levels.map { it.profit / perGrid * 100 }
+        return GridResult(step, perGrid, levels, levels.sumOf { it.profit }, rates.min(), rates.max())
+    }
 }
