@@ -727,7 +727,7 @@ private fun ProphetSection(bars: List<Bar>) {
     SectionCard("7. Prophet 預測") {
         Text(
             "使用 Facebook Prophet 內建預設參數（changepoint_prior_scale 0.05、seasonality_prior_scale 10、" +
-                "25 個轉折點、轉折點範圍 80%、信賴區間 80%），以近約 5 年日線收盤價訓練，預測未來 90 天。",
+                "25 個轉折點、轉折點範圍 80%、信賴區間 80%），以近約 5 年日線收盤價訓練，預測未來 90 天內的交易日（不含週六日）。",
             style = MaterialTheme.typography.bodySmall
         )
         when (val s = state) {
@@ -750,7 +750,7 @@ private fun ProphetChart(r: ProphetResult, trainDays: Int) {
     val bandUp = remember(r) { r.histUpper + r.upper }
     val end = nf - 1
     Text(
-        "訓練資料 $trainDays 個交易日；預測 $nf 天後（${DateUtil.format(r.futureDays[end])}）：" +
+        "訓練資料 $trainDays 個交易日；預測至 ${DateUtil.format(r.futureDays[end])}（$nf 個交易日）：" +
             "${f2(r.yhat[end])}（區間 ${f2(r.lower[end])} ～ ${f2(r.upper[end])}）",
         style = MaterialTheme.typography.bodyMedium
     )
