@@ -46,6 +46,22 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
+/** 圖表目前顯示的範圍。多張圖共用同一個實例即可同步縮放與平移。 */
+class ChartViewState(val n: Int, initialVisible: Int) {
+    private val initial = min(n, initialVisible)
+    var start by mutableFloatStateOf((n - initial).toFloat())
+    var count by mutableFloatStateOf(initial.toFloat())
+
+    fun reset() {
+        count = initial.toFloat()
+        start = (n - initial).toFloat()
+    }
+}
+
+@Composable
+fun rememberChartViewState(n: Int, initialVisible: Int = 150): ChartViewState =
+    remember(n, initialVisible) { ChartViewState(n, initialVisible) }
+
 class ChartSeries(
     val name: String,
     val color: Color,
@@ -66,12 +82,14 @@ fun ZoomableLineChart(
     bandName: String = "",
     bandColor: Color = Color(0xFF90A4AE),
     chartHeight: Dp = 260.dp,
-    initialVisible: Int = 150
+    initialVisible: Int = 150,
+    state: ChartViewState? = null,
+    showHint: Boolean = true
 ) {
     if (labels.size < 2) {
         Text("資料不足，無法繪圖", style = MaterialTheme.typography.bodyMedium, modifier = modifier)
     } else {
-        ChartBody(labels, series, modifier, band, bandName, bandColor, chartHeight, initialVisible)
+        ChartBody(labels, series, modifier, band, bandName, bandColor, chartHeight, initialVisible, state, showHint)
     }
 }
 
@@ -84,12 +102,13 @@ private fun ChartBody(
     bandName: String,
     bandColor: Color,
     chartHeight: Dp,
-    initialVisible: Int
+    initialVisible: Int,
+    state: ChartViewState?,
+    showHint: Boolean
 ) {
     val n = labels.size
-    val initial = min(n, initialVisible)
-    var count by remember(n) { mutableFloatStateOf(initial.toFloat()) }
-    var start by remember(n) { mutableFloatStateOf((n - initial).toFloat()) }
+    val own = remember(n, initialVisible) { ChartViewState(n, initialVisible) }
+    val vs = if (state != null && state.n == n) state else own
     val textColor = MaterialTheme.colorScheme.onSurfaceVariant
     val gridColor = MaterialTheme.colorScheme.outlineVariant
     val paint = remember { android.graphics.Paint().apply { isAntiAlias = true } }
@@ -100,10 +119,7 @@ private fun ChartBody(
                 .fillMaxWidth()
                 .height(chartHeight)
                 .pointerInput(n) {
-                    detectTapGestures(onDoubleTap = {
-                        count = initial.toFloat()
-                        start = (n - initial).toFloat()
-                    })
+                    detectTapGestures(onDoubleTap = { vs.reset() })
                 }
                 .pointerInput(n) {
                     awaitEachGesture {
@@ -111,19 +127,19 @@ private fun ChartBody(
                         do {
                             val event = awaitPointerEvent()
                             val multi = event.changes.count { it.pressed } >= 2
-                            val zoomed = count < n - 0.5f
+                            val zoomed = vs.count < n - 0.5f
                             val zoom = event.calculateZoom()
                             val pan = event.calculatePan()
                             val w = size.width.toFloat().coerceAtLeast(1f)
                             if (multi || (zoomed && abs(pan.x) > abs(pan.y))) {
                                 if (multi && zoom != 1f) {
-                                    val newCount = (count / zoom).coerceIn(min(10, n).toFloat(), n.toFloat())
+                                    val newCount = (vs.count / zoom).coerceIn(min(10, n).toFloat(), n.toFloat())
                                     val cx = (event.calculateCentroid().x / w).coerceIn(0f, 1f)
-                                    start += (count - newCount) * cx
-                                    count = newCount
+                                    vs.start += (vs.count - newCount) * cx
+                                    vs.count = newCount
                                 }
-                                start -= pan.x / w * count
-                                start = start.coerceIn(0f, max(0f, n - count))
+                                vs.start -= pan.x / w * vs.count
+                                vs.start = vs.start.coerceIn(0f, max(0f, n - vs.count))
                                 event.changes.forEach { if (it.positionChanged()) it.consume() }
                             }
                         } while (event.changes.any { it.pressed })
@@ -136,8 +152,8 @@ private fun ChartBody(
             val bottomPad = 22.dp.toPx()
             val plotW = size.width - leftPad - rightPad
             val plotH = size.height - topPad - bottomPad
-            val s = start
-            val c = count
+            val s = vs.start
+            val c = vs.count
             val i0 = floor(s).toInt().coerceIn(0, n - 1)
             val i1 = ceil(s + c - 1f).toInt().coerceIn(i0, n - 1)
 
@@ -249,11 +265,13 @@ private fun ChartBody(
                 }
             }
         }
-        Text(
-            "雙指縮放、放大後左右拖曳、雙擊還原",
-            style = MaterialTheme.typography.labelSmall,
-            color = textColor
-        )
+        if (showHint) {
+            Text(
+                "雙指縮放、放大後左右拖曳、雙擊還原",
+                style = MaterialTheme.typography.labelSmall,
+                color = textColor
+            )
+        }
     }
 }
 

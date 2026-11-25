@@ -335,4 +335,34 @@ class StockLogicTest {
         assertEquals(6.16, YahooApi.parseEps(basicOnly)[0].eps, 1e-9)
         assertTrue(YahooApi.parseEps("""{"timeseries":{"result":[],"error":null}}""").isEmpty())
     }
+
+    @Test
+    fun volumeFullAlignsWithBars() {
+        val bars = (0L until 25L).map { bar(it, 10.0, if (it == 22L) 300.0 else 100.0) }
+        val f = Indicators.volumeFull(bars, 20, 2.0)
+        assertEquals(25, f.volume.size)
+        assertTrue(f.average[19].isNaN() && f.threshold[19].isNaN())
+        assertEquals(100.0, f.average[20], 1e-9)
+        assertEquals(200.0, f.threshold[20], 1e-9)
+        assertEquals(110.0, f.average[23], 1e-9) // 視窗 3..22 含 300
+        // 與 volumeSeries 的數值一致
+        val s = Indicators.volumeSeries(bars, 20, 2.0)!!
+        for (i in s.dates.indices) assertEquals(s.average[i], f.average[i + 20], 1e-9)
+    }
+
+    @Test
+    fun bollingerCustomWindowAndK() {
+        val closes = List(5) { 90.0 } + List(5) { 110.0 }
+        val bars = closes.mapIndexed { i, c -> bar(i.toLong(), c) }
+        val r = Indicators.bollinger(bars, 10, 1.0)!! // 平均 100、母體標準差 10
+        assertEquals(1, r.mid.size)
+        assertEquals(110.0, r.upper[0], 1e-9)
+        assertEquals(90.0, r.lower[0], 1e-9)
+        val r3 = Indicators.bollinger(bars, 10, 3.0)!!
+        assertEquals(130.0, r3.upper[0], 1e-9)
+        // 視窗與日期對應：從第 window 根起
+        val r5 = Indicators.bollinger(bars, 5, 2.0)!!
+        assertEquals(6, r5.dates.size)
+        assertEquals(4L, r5.dates.first())
+    }
 }

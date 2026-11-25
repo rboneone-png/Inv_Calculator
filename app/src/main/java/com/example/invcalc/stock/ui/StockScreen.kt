@@ -422,19 +422,33 @@ private fun SharpeSection(bars: List<Bar>) {
     }
 }
 
-// ---------------------------------------------------------------- 2. 布林通道
+// ---------------------------------------------------------------- 2. 布林通道 + 成交量
 
 @Composable
 private fun BollingerSection(bars: List<Bar>) {
     var periodIdx by rememberSaveable { mutableIntStateOf(0) }
+    var maText by rememberSaveable { mutableStateOf("20") }
+    var kText by rememberSaveable { mutableStateOf("2") }
     val period = Period.values()[periodIdx]
     val data = remember(bars, periodIdx) { Resample.toPeriod(bars, period) }
-    val res = remember(data) { Indicators.bollinger(data, 20, 2.0) }
+    val window = maText.toIntOrNull()
+    val k = kText.num()
+    val paramsOk = window != null && k != null && window in 2..250 && k > 0.0 && k <= 10.0
+    val res = remember(data, window, k) {
+        if (window != null && k != null && window in 2..250 && k > 0.0 && k <= 10.0)
+            Indicators.bollinger(data, window, k) else null
+    }
+    val vol = remember(data) { Indicators.volumeFull(data, 20, 2.0) }
 
-    SectionCard("2. 布林通道（20 根均線 ± 2 倍標準差）") {
+    SectionCard("2. 布林通道與成交量") {
         PeriodChips(periodIdx) { periodIdx = it }
-        if (res == null) {
-            Text("資料不足：${period.label}至少需要 20 根 K 棒。")
+        NumField("均線根數（預設 20，範圍 2–250）", maText) { maText = it.filter(Char::isDigit) }
+        NumField("標準差倍數（預設 2，範圍 0–10）", kText) { kText = it }
+        OutlinedButton(onClick = { maText = "20"; kText = "2" }) { Text("還原預設值（20、2）") }
+        if (!paramsOk) {
+            Text("參數無效：均線根數需為 2–250 的整數，標準差倍數需大於 0 且不超過 10。", color = MaterialTheme.colorScheme.error)
+        } else if (res == null) {
+            Text("資料不足：${period.label}至少需要 $window 根 K 棒。")
         } else {
             val i = res.close.lastIndex
             val c = res.close[i]
@@ -445,12 +459,16 @@ private fun BollingerSection(bars: List<Bar>) {
             }
             val pctB = (c - res.lower[i]) / (res.upper[i] - res.lower[i]) * 100
             Text(
-                "最新${period.label}：上軌 ${f2(res.upper[i])}、中軌 ${f2(res.mid[i])}、下軌 ${f2(res.lower[i])}\n" +
+                "${window} 根均線 ± ${kText} 倍標準差\n" +
+                    "最新${period.label}：上軌 ${f2(res.upper[i])}、中軌 ${f2(res.mid[i])}、下軌 ${f2(res.lower[i])}\n" +
                     "$position（%B = ${f2(pctB)}%）",
                 style = MaterialTheme.typography.bodyMedium
             )
+            val labels = res.dates.map { DateUtil.format(it) }
+            // 兩張圖共用同一個檢視狀態：日期完全對齊，縮放與平移同步
+            val view = rememberChartViewState(labels.size, 150)
             ZoomableLineChart(
-                labels = res.dates.map { DateUtil.format(it) },
+                labels = labels,
                 series = listOf(
                     ChartSeries("收盤價", cBlue, res.close),
                     ChartSeries("中軌", cOrange, res.mid, 1.2f),
@@ -460,7 +478,25 @@ private fun BollingerSection(bars: List<Bar>) {
                 band = res.upper to res.lower,
                 bandName = "通道",
                 bandColor = cGray,
-                initialVisible = 150
+                state = view,
+                showHint = false
+            )
+            // 成交量：與上圖相同的日期範圍（前 window-1 根沒有布林通道，故從 offset 起）
+            val off = data.size - labels.size
+            Text("成交量（日期與上圖對齊）", style = MaterialTheme.typography.labelLarge)
+            ZoomableLineChart(
+                labels = labels,
+                series = listOf(
+                    ChartSeries("成交量", cBlue, vol.volume.subList(off, data.size), 1.2f),
+                    ChartSeries("均量（20 根）", cOrange, vol.average.subList(off, data.size), 1.6f),
+                    ChartSeries("2 倍門檻", cRed, vol.threshold.subList(off, data.size), 1.2f)
+                ),
+                chartHeight = 150.dp,
+                state = view
+            )
+            Text(
+                "成交量線高過紅色門檻線（均量的 2 倍）的日期即為量能突高。兩張圖同步縮放與拖曳。",
+                style = MaterialTheme.typography.bodySmall
             )
         }
     }
@@ -489,16 +525,7 @@ private fun VolumeSection(bars: List<Bar>) {
                     "近一年（約 250 個交易日）量能突高天數：${series.spikeFlags.takeLast(250).count { it }} 天",
                 style = MaterialTheme.typography.bodyMedium
             )
-            ZoomableLineChart(
-                labels = series.dates.map { DateUtil.format(it) },
-                series = listOf(
-                    ChartSeries("成交量", cBlue, series.volume, 1.2f),
-                    ChartSeries("月均量（20 日）", cOrange, series.average, 1.6f),
-                    ChartSeries("2 倍門檻", cRed, series.threshold, 1.2f)
-                ),
-                initialVisible = 120
-            )
-            Text("成交量線高過紅色門檻線的日子即為量能突高。", style = MaterialTheme.typography.bodySmall)
+            Text("成交量曲線圖請見上方「2. 布林通道與成交量」下方。", style = MaterialTheme.typography.bodySmall)
         }
     }
 }
