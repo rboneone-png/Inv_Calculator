@@ -296,4 +296,29 @@ object Indicators {
         }
         return VolumeSeries(dates, vol, avgs, thr, flags)
     }
+
+    class VolumeFull(val volume: List<Double>, val average: List<Double>, val threshold: List<Double>)
+
+    /**
+     * 與 bars 等長的成交量、前 window 根均量、multiple 倍門檻；
+     * 前 window 根尚無均量，以 NaN 表示，方便與其他指標以相同日期對齊。
+     */
+    fun volumeFull(bars: List<Bar>, window: Int = 20, multiple: Double = 2.0): VolumeFull {
+        val avg = ArrayList<Double>(bars.size)
+        val thr = ArrayList<Double>(bars.size)
+        var sum = 0.0
+        for (i in bars.indices) {
+            if (i < window) {
+                avg.add(Double.NaN)
+                thr.add(Double.NaN)
+                sum += bars[i].volume
+            } else {
+                val a = sum / window
+                avg.add(a)
+                thr.add(a * multiple)
+                sum += bars[i].volume - bars[i - window].volume
+            }
+        }
+        return VolumeFull(bars.map { it.volume }, avg, thr)
+    }
 }
