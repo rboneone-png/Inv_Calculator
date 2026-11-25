@@ -47,10 +47,12 @@ import com.example.invcalc.stock.Resample
 import com.example.invcalc.stock.Stock
 import com.example.invcalc.stock.StockCache
 import com.example.invcalc.stock.StockStore
+import com.example.invcalc.stock.TwNames
 import com.example.invcalc.stock.SymbolUtil
 import com.example.invcalc.stock.YahooApi
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Locale
@@ -70,6 +72,16 @@ fun StockTab() {
     fun update(list: List<Stock>) {
         stocks = list
         store.save(list)
+    }
+
+    // 已存的台股若還是英文名稱，背景補上中文簡稱
+    LaunchedEffect(Unit) {
+        val targets = stocks.filter { SymbolUtil.isTaiwanSymbol(it.symbol) && !SymbolUtil.hasCjk(it.name) }
+        if (targets.isEmpty()) return@LaunchedEffect
+        val found = withContext(Dispatchers.IO) {
+            targets.mapNotNull { st -> TwNames.lookup(st.symbol)?.let { st.symbol to it.name } }.toMap()
+        }
+        if (found.isNotEmpty()) update(stocks.map { st -> found[st.symbol]?.let { st.copy(name = it) } ?: st })
     }
 
     val current = stocks.firstOrNull { it.symbol == selected }
@@ -154,13 +166,61 @@ fun StockTab() {
     }
 }
 
+private sealed interface NameState {
+    object Idle : NameState
+    object Searching : NameState
+    class Found(val symbol: String, val name: String) : NameState
+    object NotFound : NameState
+}
+
+/** 依代號找名稱：台股用證交所／櫃買中心的中文簡稱，其餘（或查無時）用 Yahoo 名稱。需在背景執行緒呼叫。 */
+private fun findName(input: String): TwNames.Match? {
+    TwNames.lookup(input)?.let { return it }
+    val raw = input.trim().uppercase(Locale.US)
+    val candidates = if (SymbolUtil.isTaiwanCode(raw)) listOf("$raw.TW", "$raw.TWO") else listOf(SymbolUtil.normalize(raw))
+    for (c in candidates) {
+        try {
+            return TwNames.Match(c, YahooApi.fetchNameBlocking(c))
+        } catch (e: Exception) {
+            // 試下一個
+        }
+    }
+    return null
+}
+
 @Composable
 private fun AddStockDialog(existing: List<String>, onDismiss: () -> Unit, onAdded: (Stock) -> Unit) {
     var symbol by remember { mutableStateOf("") }
     var name by remember { mutableStateOf("") }
+    var nameTouched by remember { mutableStateOf(false) }
+    var lookup by remember { mutableStateOf<NameState>(NameState.Idle) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+
+    // 輸入代號後自動帶入名稱（停止輸入 0.5 秒後查詢）
+    LaunchedEffect(symbol) {
+        if (symbol.isBlank()) {
+            lookup = NameState.Idle
+            return@LaunchedEffect
+        }
+        lookup = NameState.Searching
+        delay(500)
+        val found = try {
+            withContext(Dispatchers.IO) { findName(symbol) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            null
+        }
+        if (found != null) {
+            lookup = NameState.Found(found.symbol, found.name)
+            if (!nameTouched) name = found.name
+        } else {
+            lookup = NameState.NotFound
+            if (!nameTouched) name = ""
+        }
+    }
 
     AlertDialog(
         onDismissRequest = { if (!loading) onDismiss() },
@@ -170,18 +230,27 @@ private fun AddStockDialog(existing: List<String>, onDismiss: () -> Unit, onAdde
                 OutlinedTextField(
                     value = symbol,
                     onValueChange = { symbol = it; error = null },
-                    label = { Text("股票代號（如 2330、AAPL）") },
+                    label = { Text("股票代號（如 2330、6488、AAPL）") },
                     singleLine = true,
                     enabled = !loading
                 )
                 OutlinedTextField(
                     value = name,
-                    onValueChange = { name = it },
-                    label = { Text("名稱（選填，留空自動帶入）") },
+                    onValueChange = { name = it; nameTouched = true },
+                    label = { Text("名稱（自動帶入，可修改）") },
                     singleLine = true,
                     enabled = !loading
                 )
-                if (loading) Text("查詢中…", style = MaterialTheme.typography.bodySmall)
+                when (val l = lookup) {
+                    is NameState.Searching -> Text("查詢名稱中…", style = MaterialTheme.typography.bodySmall)
+                    is NameState.Found -> Text("✔ ${l.symbol}：${l.name}", style = MaterialTheme.typography.bodySmall)
+                    is NameState.NotFound -> Text(
+                        "查不到名稱（仍可按新增，會連線驗證代號）",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    is NameState.Idle -> Unit
+                }
+                if (loading) Text("新增中…", style = MaterialTheme.typography.bodySmall)
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
             }
         },
@@ -189,23 +258,41 @@ private fun AddStockDialog(existing: List<String>, onDismiss: () -> Unit, onAdde
             TextButton(
                 enabled = !loading && symbol.isNotBlank(),
                 onClick = {
-                    val sym = SymbolUtil.normalize(symbol)
-                    if (sym in existing) {
+                    val found = lookup as? NameState.Found
+                    val raw = symbol.trim().uppercase(Locale.US)
+                    val candidates = when {
+                        found != null -> listOf(found.symbol)
+                        SymbolUtil.isTaiwanCode(raw) -> listOf("$raw.TW", "$raw.TWO")
+                        else -> listOf(SymbolUtil.normalize(raw))
+                    }
+                    if (candidates.any { it in existing }) {
                         error = "已在清單中"
                         return@TextButton
                     }
                     loading = true
+                    error = null
                     scope.launch {
-                        try {
-                            val parsed = withContext(Dispatchers.IO) { YahooApi.fetchBlocking(sym) }
-                            StockCache.put(sym, parsed.bars)
-                            onAdded(Stock(sym, name.trim().ifBlank { parsed.name }))
-                        } catch (e: CancellationException) {
-                            throw e
-                        } catch (e: Exception) {
-                            error = e.message ?: "查詢失敗，請檢查代號與網路"
-                            loading = false
+                        var parsed: YahooApi.Parsed? = null
+                        var usedSymbol = ""
+                        var lastError: String? = null
+                        for (c in candidates) {
+                            try {
+                                parsed = withContext(Dispatchers.IO) { YahooApi.fetchBlocking(c) }
+                                usedSymbol = c
+                                break
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                lastError = e.message
+                            }
                         }
+                        if (parsed == null) {
+                            error = lastError ?: "查詢失敗，請檢查代號與網路"
+                            loading = false
+                            return@launch
+                        }
+                        StockCache.put(usedSymbol, parsed.bars)
+                        onAdded(Stock(usedSymbol, name.trim().ifBlank { found?.name ?: parsed.name }))
                     }
                 }
             ) { Text("新增") }
@@ -266,6 +353,9 @@ private fun StockDetail(stock: Stock, onBack: () -> Unit) {
                 SharpeSection(s.bars)
                 BollingerSection(s.bars)
                 VolumeSection(s.bars)
+                SortinoSection(s.bars)
+                TreynorSection(stock, s.bars)
+                CapeSection(stock, s.bars)
                 ProphetSection(s.bars)
                 Text("以上分析僅供參考，不構成投資建議。", style = MaterialTheme.typography.bodySmall)
             }
@@ -381,8 +471,9 @@ private fun BollingerSection(bars: List<Bar>) {
 @Composable
 private fun VolumeSection(bars: List<Bar>) {
     val res = remember(bars) { Indicators.volumeSpike(bars, 20, 2.0) }
+    val series = remember(bars) { Indicators.volumeSeries(bars, 20, 2.0) }
     SectionCard("3. 交易量突高判斷") {
-        if (res == null) {
+        if (res == null || series == null) {
             Text("資料不足，無法計算（需至少 21 個交易日且有成交量）。")
         } else {
             Text(
@@ -394,14 +485,185 @@ private fun VolumeSection(bars: List<Bar>) {
                 "日期：${DateUtil.format(res.date)}\n" +
                     "當日成交量：${String.format(Locale.US, "%,.0f", res.volume)}\n" +
                     "近 20 個交易日平均量（月均量）：${String.format(Locale.US, "%,.0f", res.average)}\n" +
-                    "倍數：${f2(res.ratio)} 倍（判斷標準：當日量 ≥ 月均量的 2 倍）",
+                    "倍數：${f2(res.ratio)} 倍（判斷標準：當日量 ≥ 月均量的 2 倍）\n" +
+                    "近一年（約 250 個交易日）量能突高天數：${series.spikeFlags.takeLast(250).count { it }} 天",
                 style = MaterialTheme.typography.bodyMedium
+            )
+            ZoomableLineChart(
+                labels = series.dates.map { DateUtil.format(it) },
+                series = listOf(
+                    ChartSeries("成交量", cBlue, series.volume, 1.2f),
+                    ChartSeries("月均量（20 日）", cOrange, series.average, 1.6f),
+                    ChartSeries("2 倍門檻", cRed, series.threshold, 1.2f)
+                ),
+                initialVisible = 120
+            )
+            Text("成交量線高過紅色門檻線的日子即為量能突高。", style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+// ---------------------------------------------------------------- 4. 索提諾比率
+
+@Composable
+private fun SortinoSection(bars: List<Bar>) {
+    var periodIdx by rememberSaveable { mutableIntStateOf(0) }
+    var rf by rememberSaveable { mutableStateOf("1.5") }
+    val period = Period.values()[periodIdx]
+    val data = remember(bars, periodIdx) { Resample.toPeriod(bars, period) }
+    val res = remember(data, periodIdx, rf) { Indicators.sortino(data, period, rf.num() ?: 0.0) }
+
+    SectionCard("4. 索提諾比率（Sortino Ratio）") {
+        Text(
+            "與夏普值類似，但只把「低於無風險利率的下跌波動」視為風險，不懲罰向上的波動。",
+            style = MaterialTheme.typography.bodySmall
+        )
+        PeriodChips(periodIdx) { periodIdx = it }
+        NumField("無風險利率（年化 %）", rf) { rf = it }
+        if (res == null) {
+            Text("資料不足：${period.label}至少需要 ${period.sharpeWindow + 1} 根 K 棒。")
+        } else {
+            val latest = res.rolling.lastOrNull { it.isFinite() } ?: Double.NaN
+            Text(
+                "最新滾動索提諾比率（近 ${res.window} 根${period.label}，年化）：${f2(latest)}\n" +
+                    "整段期間索提諾比率：${f2(res.overall)}\n" +
+                    "數值越高代表每承擔一單位下檔風險所得的超額報酬越高；期間內完全沒有下跌時無法計算（圖上斷線）。",
+                style = MaterialTheme.typography.bodyMedium
+            )
+            ZoomableLineChart(
+                labels = res.dates.map { DateUtil.format(it) },
+                series = listOf(ChartSeries("滾動索提諾比率", cGreen, res.rolling)),
+                initialVisible = 150
             )
         }
     }
 }
 
-// ---------------------------------------------------------------- 4. Prophet
+// ---------------------------------------------------------------- 5. 崔納比率
+
+@Composable
+private fun TreynorSection(stock: Stock, bars: List<Bar>) {
+    val taiwan = SymbolUtil.isTaiwanSymbol(stock.symbol)
+    val indexSymbol = if (taiwan) "^TWII" else "^GSPC"
+    val indexName = if (taiwan) "台灣加權指數" else "S&P 500 指數"
+    var idx by remember(indexSymbol) { mutableStateOf<LoadState>(LoadState.Loading) }
+    var periodIdx by rememberSaveable { mutableIntStateOf(0) }
+    var rf by rememberSaveable { mutableStateOf("1.5") }
+    val period = Period.values()[periodIdx]
+
+    LaunchedEffect(indexSymbol) {
+        idx = try {
+            val b = StockCache.get(indexSymbol)
+                ?: withContext(Dispatchers.IO) { YahooApi.fetchBlocking(indexSymbol).bars }
+            StockCache.put(indexSymbol, b)
+            LoadState.Ready(b)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            LoadState.Failed(e.message ?: "載入失敗")
+        }
+    }
+    val idxBars = (idx as? LoadState.Ready)?.bars
+    val res = remember(bars, idxBars, periodIdx, rf) {
+        idxBars?.let { Indicators.treynor(bars, it, period, rf.num() ?: 0.0) }
+    }
+
+    SectionCard("5. 崔納比率（Treynor Ratio）") {
+        Text(
+            "每承擔一單位「市場風險（Beta）」所得到的年化超額報酬，市場基準為$indexName。",
+            style = MaterialTheme.typography.bodySmall
+        )
+        PeriodChips(periodIdx) { periodIdx = it }
+        NumField("無風險利率（年化 %）", rf) { rf = it }
+        when (val s = idx) {
+            is LoadState.Loading -> Text("載入大盤資料中…")
+            is LoadState.Failed -> Text("大盤資料載入失敗：${s.message}", color = MaterialTheme.colorScheme.error)
+            is LoadState.Ready -> if (res == null) {
+                Text("資料不足：${period.label}與大盤重疊的資料至少需要 ${period.sharpeWindow + 1} 根 K 棒。")
+            } else {
+                val latest = res.treynorPct.lastOrNull { it.isFinite() } ?: Double.NaN
+                val latestBeta = res.beta.lastOrNull { it.isFinite() } ?: Double.NaN
+                Text(
+                    "最新滾動崔納比率（近 ${res.window} 根${period.label}）：${f2(latest)}%（Beta ${f2(latestBeta)}）\n" +
+                        "整段期間：崔納比率 ${f2(res.overallTreynorPct)}%、Beta ${f2(res.overallBeta)}\n" +
+                        "Beta > 1 代表波動大於大盤；崔納比率越高越好。Beta 接近 0 時比率無意義（圖上斷線）。",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                val labels = res.dates.map { DateUtil.format(it) }
+                ZoomableLineChart(
+                    labels = labels,
+                    series = listOf(ChartSeries("滾動崔納比率（%）", cBlue, res.treynorPct)),
+                    initialVisible = 150
+                )
+                ZoomableLineChart(
+                    labels = labels,
+                    series = listOf(ChartSeries("滾動 Beta", cOrange, res.beta)),
+                    initialVisible = 150
+                )
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------- 6. 席勒本益比
+
+@Composable
+private fun CapeSection(stock: Stock, bars: List<Bar>) {
+    var eps by remember(stock.symbol) { mutableStateOf<List<Indicators.EpsPoint>?>(StockCache.getEps(stock.symbol)) }
+    LaunchedEffect(stock.symbol) {
+        if (eps == null) {
+            val list = try {
+                withContext(Dispatchers.IO) { YahooApi.fetchEpsBlocking(stock.symbol) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                emptyList()
+            }
+            StockCache.putEps(stock.symbol, list)
+            eps = list
+        }
+    }
+    val monthly = remember(bars) { Resample.toPeriod(bars, Period.MONTH) }
+    val e = eps
+    val res = remember(monthly, e) { e?.let { Indicators.cape(monthly, it) } }
+
+    SectionCard("6. 席勒本益比（Shiller P/E，CAPE）") {
+        Text(
+            "股價 ÷ 過去最多 10 年的平均年度 EPS，用來平滑景氣循環。本程式未做通膨調整；" +
+                "Yahoo 免費資料通常只有近 4–5 年的年度 EPS，因此多半不足 10 年，數值僅供參考。",
+            style = MaterialTheme.typography.bodySmall
+        )
+        when {
+            e == null -> Text("載入財報 EPS 中…")
+            e.isEmpty() -> Text("Yahoo 未提供此股票的歷年 EPS，無法計算席勒本益比。")
+            res == null -> Text("EPS 平均為負或資料不足，無法計算。")
+            else -> {
+                val ratio = res.latest / res.median
+                val verdict = when {
+                    ratio > 1.2 -> "高於自身歷史中位數（相對偏貴）"
+                    ratio < 0.8 -> "低於自身歷史中位數（相對偏便宜）"
+                    else -> "接近自身歷史中位數"
+                }
+                Text(
+                    "最新席勒本益比：${f2(res.latest)} 倍\n" +
+                        "採用 ${res.yearsUsed} 年平均 EPS：${f2(res.avgEps)}\n" +
+                        "此區間歷史中位數：${f2(res.median)} 倍\n$verdict",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                ZoomableLineChart(
+                    labels = res.dates.map { DateUtil.format(it) },
+                    series = listOf(
+                        ChartSeries("席勒本益比", cBlue, res.cape),
+                        ChartSeries("歷史中位數", cGray, List(res.cape.size) { res.median }, 1.2f)
+                    ),
+                    initialVisible = 120
+                )
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------- 7. Prophet
 
 private sealed interface ProphetState {
     object Idle : ProphetState
@@ -435,7 +697,7 @@ private fun ProphetSection(bars: List<Bar>) {
         return ProphetParams(p, a, b, c, d, e, yearly, weekly)
     }
 
-    SectionCard("4. Prophet 預測") {
+    SectionCard("7. Prophet 預測") {
         Text(
             "參數預設值為 Facebook Prophet 建議值，可自行調整後重新預測。",
             style = MaterialTheme.typography.bodySmall

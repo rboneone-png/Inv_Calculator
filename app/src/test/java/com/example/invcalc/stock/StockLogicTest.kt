@@ -190,4 +190,149 @@ class StockLogicTest {
         }
         assertEquals("No data found, symbol may be delisted", msg)
     }
+
+    // ---------------------------------------------------------------- 新增功能
+
+    @Test
+    fun dateParse() {
+        assertEquals(0L, DateUtil.parse("1970-01-01"))
+        assertEquals(19000L, DateUtil.parse("2022-01-08"))
+        assertEquals(19782L, DateUtil.parse("2024-02-29"))
+        assertNull(DateUtil.parse("not-a-date"))
+        // 與 format 互為反運算
+        for (d in listOf(-1000L, 0L, 12345L, 20000L)) assertEquals(d, DateUtil.parse(DateUtil.format(d)))
+    }
+
+    @Test
+    fun symbolTaiwanCodes() {
+        assertEquals("00679B.TW", SymbolUtil.normalize("00679b"))
+        assertEquals("0050.TW", SymbolUtil.normalize("0050"))
+        assertEquals("AAPL", SymbolUtil.normalize("AAPL"))
+        assertTrue(SymbolUtil.isTaiwanSymbol("6488.TWO"))
+        assertFalse(SymbolUtil.isTaiwanSymbol("AAPL"))
+        assertTrue(SymbolUtil.hasCjk("台積電"))
+        assertFalse(SymbolUtil.hasCjk("Taiwan Semiconductor"))
+    }
+
+    @Test
+    fun sortinoValue() {
+        // 報酬交替 +2% / -1%：目標 0 → 平均 0.5%、下檔偏差 sqrt(0.5 * 0.01%) 
+        var p = 100.0
+        val bars = ArrayList<Bar>()
+        bars.add(bar(0, p))
+        for (i in 0 until 80) {
+            p *= if (i % 2 == 0) 1.02 else 0.99
+            bars.add(bar(i + 1L, p))
+        }
+        val res = Indicators.sortino(bars, Period.MONTH, 0.0)!!
+        val expected = 0.005 / Math.sqrt(0.5 * 0.0001) * Math.sqrt(12.0)
+        assertEquals(expected, res.overall, 1e-6)
+        assertEquals(80 - 12 + 1, res.rolling.size)
+        // 完全沒有下跌 → 下檔偏差為 0 → NaN
+        val up = (0L until 80L).map { bar(it, 100.0 * Math.pow(1.01, it.toDouble())) }
+        assertTrue(Indicators.sortino(up, Period.MONTH, 0.0)!!.overall.isNaN())
+    }
+
+    @Test
+    fun treynorBetaTwo() {
+        // 股票報酬恰為大盤的 2 倍 → Beta = 2
+        val rnd = Random(3)
+        var pm = 1000.0
+        var ps = 50.0
+        val idx = ArrayList<Bar>()
+        val stk = ArrayList<Bar>()
+        idx.add(bar(0, pm)); stk.add(bar(0, ps))
+        val rsList = ArrayList<Double>()
+        for (i in 1..100) {
+            val r = (rnd.nextDouble() - 0.5) * 0.02
+            pm *= 1 + r
+            ps *= 1 + 2 * r
+            rsList.add(2 * r)
+            idx.add(bar(i.toLong(), pm)); stk.add(bar(i.toLong(), ps))
+        }
+        val res = Indicators.treynor(stk, idx, Period.DAY, 0.0)!!
+        assertEquals(2.0, res.overallBeta, 1e-6)
+        val expected = rsList.average() * 252 / 2.0 * 100
+        assertEquals(expected, res.overallTreynorPct, 1e-6)
+        assertEquals(100 - 60 + 1, res.treynorPct.size)
+        assertTrue(res.beta.all { Math.abs(it - 2.0) < 1e-6 })
+    }
+
+    @Test
+    fun alignByDate() {
+        val a = listOf(bar(1, 1.0), bar(2, 2.0), bar(4, 4.0), bar(5, 5.0))
+        val b = listOf(bar(2, 20.0), bar(3, 30.0), bar(5, 50.0))
+        val (x, y) = Indicators.align(a, b)
+        assertEquals(listOf(2L, 5L), x.map { it.epochDay })
+        assertEquals(listOf(20.0, 50.0), y.map { it.close })
+    }
+
+    @Test
+    fun capeUsesOnlyPublishedEps() {
+        val d0 = 19000L
+        val bars = listOf(bar(d0 + 10, 100.0), bar(d0 + 100, 100.0), bar(d0 + 500, 100.0))
+        val eps = listOf(Indicators.EpsPoint(d0, 5.0), Indicators.EpsPoint(d0 + 365, 10.0))
+        val r = Indicators.cape(bars, eps, lagDays = 90, maxYears = 10)!!
+        assertEquals(2, r.cape.size) // 第一個日期尚無已公布 EPS
+        assertEquals(20.0, r.cape[0], 1e-9)       // 100 / 5
+        assertEquals(100.0 / 7.5, r.cape[1], 1e-9) // 兩年平均 7.5
+        assertEquals(2, r.yearsUsed)
+        assertEquals(7.5, r.avgEps, 1e-9)
+        assertEquals((20.0 + 100.0 / 7.5) / 2, r.median, 1e-9)
+        // EPS 平均為負 → 不計算
+        assertNull(Indicators.cape(bars, listOf(Indicators.EpsPoint(d0, -3.0)), 90, 10))
+        assertNull(Indicators.cape(bars, emptyList(), 90, 10))
+    }
+
+    @Test
+    fun volumeSeriesFlagsSpikes() {
+        val bars = (0L until 25L).map { bar(it, 10.0, if (it == 22L) 300.0 else 100.0) }
+        val v = Indicators.volumeSeries(bars, 20, 2.0)!!
+        assertEquals(5, v.dates.size)
+        assertEquals(200.0, v.threshold[0], 1e-9)
+        assertEquals(listOf(false, false, true, false, false), v.spikeFlags)
+        assertEquals(110.0, v.average[3], 1e-9) // 視窗含 300 的那天：(19*100+300)/20
+    }
+
+    @Test
+    fun twNamesParse() {
+        val twse = """[{"Date":"1141125","Code":"2330","Name":"台積電"},{"Date":"1141125","Code":"0050","Name":"元大台灣50"}]"""
+        val m1 = TwNames.parseTable(twse)
+        assertEquals("台積電", m1["2330"])
+        assertEquals("元大台灣50", m1["0050"])
+
+        // 公司基本資料：簡稱優先於全名
+        val basic = """[{"出表日期":"1141125","公司代號":"2330","公司名稱":"台灣積體電路製造股份有限公司","公司簡稱":"台積電"}]"""
+        assertEquals("台積電", TwNames.parseTable(basic)["2330"])
+
+        val tpex = """[{"Date":"1141125","SecuritiesCompanyCode":"6488","CompanyName":"環球晶"}]"""
+        assertEquals("環球晶", TwNames.parseTable(tpex)["6488"])
+
+        assertTrue(TwNames.parseTable("[]").isEmpty())
+        assertTrue(TwNames.parseTable("""[{"foo":"bar"}]""").isEmpty())
+    }
+
+    @Test
+    fun yahooParseEps() {
+        val json = """
+        {"timeseries":{"result":[
+          {"meta":{"symbol":["AAPL"],"type":["annualDilutedEPS"]},"timestamp":[1,2],
+           "annualDilutedEPS":[
+             {"asOfDate":"2023-09-30","reportedValue":{"raw":6.13,"fmt":"6.13"}},
+             {"asOfDate":"2022-09-30","reportedValue":{"raw":6.11,"fmt":"6.11"}}]},
+          {"meta":{"symbol":["AAPL"],"type":["annualBasicEPS"]},"timestamp":[1],
+           "annualBasicEPS":[{"asOfDate":"2023-09-30","reportedValue":{"raw":6.16}}]}
+        ],"error":null}}
+        """.trimIndent()
+        val eps = YahooApi.parseEps(json)
+        assertEquals(2, eps.size)
+        assertEquals(DateUtil.parse("2022-09-30"), eps[0].asOfDay) // 依日期排序
+        assertEquals(6.11, eps[0].eps, 1e-9)
+        assertEquals(6.13, eps[1].eps, 1e-9)
+
+        // 無稀釋 EPS 時退而使用基本 EPS
+        val basicOnly = """{"timeseries":{"result":[{"meta":{"type":["annualBasicEPS"]},"annualBasicEPS":[{"asOfDate":"2023-09-30","reportedValue":{"raw":6.16}}]}],"error":null}}"""
+        assertEquals(6.16, YahooApi.parseEps(basicOnly)[0].eps, 1e-9)
+        assertTrue(YahooApi.parseEps("""{"timeseries":{"result":[],"error":null}}""").isEmpty())
+    }
 }
