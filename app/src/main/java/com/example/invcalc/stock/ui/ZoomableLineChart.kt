@@ -66,7 +66,8 @@ class ChartSeries(
     val name: String,
     val color: Color,
     val values: List<Double>, // 可含 NaN（該點不繪製）
-    val strokeDp: Float = 1.6f
+    val strokeDp: Float = 1.6f,
+    val dots: Boolean = false // true 時以圓點繪製（散佈圖）
 )
 
 /**
@@ -191,11 +192,13 @@ private fun ChartBody(
                 paint.textAlign = android.graphics.Paint.Align.RIGHT
                 nc.drawText(fmtAxis(v), leftPad - 4.dp.toPx(), y + 3.5.dp.toPx(), paint)
             }
-            // X 軸標籤
+            // X 軸標籤與垂直格線
             paint.textAlign = android.graphics.Paint.Align.CENTER
             for (k in 0..3) {
                 val idx = (s + (c - 1f) * k / 3).roundToInt().coerceIn(0, n - 1)
-                val x = (leftPad + plotW * k / 3).coerceIn(leftPad + 24.dp.toPx(), leftPad + plotW - 24.dp.toPx())
+                val gx = leftPad + plotW * k / 3
+                drawLine(gridColor, Offset(gx, topPad), Offset(gx, topPad + plotH), strokeWidth = 1f)
+                val x = gx.coerceIn(leftPad + 24.dp.toPx(), leftPad + plotW - 24.dp.toPx())
                 nc.drawText(labels[idx], x, size.height - 6.dp.toPx(), paint)
             }
             // 零軸
@@ -224,8 +227,19 @@ private fun ChartBody(
                         drawPath(p, bandColor.copy(alpha = 0.25f))
                     }
                 }
-                // 折線
+                // 折線／圓點
                 series.forEach { sr ->
+                    if (sr.dots) {
+                        val r = 1.8.dp.toPx()
+                        var di = i0
+                        while (true) {
+                            val v = sr.values[di]
+                            if (v.isFinite()) drawCircle(sr.color, r, Offset(xOf(di), yOf(v)))
+                            if (di >= i1) break
+                            di = min(di + step, i1)
+                        }
+                        return@forEach
+                    }
                     val path = Path()
                     var pen = false
                     var i = i0

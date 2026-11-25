@@ -15,7 +15,7 @@ import kotlin.math.sqrt
 
 /** 參數與預設值皆取自 Facebook Prophet 的建議預設值。 */
 data class ProphetParams(
-    val periods: Int = 90,                       // 預測交易日數（Prophet 無預設，此處自訂）
+    val periods: Int = 90,                       // 預測天數（日曆天，同 make_future_dataframe）
     val changepointPriorScale: Double = 0.05,    // changepoint_prior_scale
     val seasonalityPriorScale: Double = 10.0,    // seasonality_prior_scale
     val nChangepoints: Int = 25,                 // n_changepoints
@@ -30,6 +30,8 @@ class ProphetResult(
     val histDays: List<Long>,
     val histActual: List<Double>,
     val histFit: List<Double>,
+    val histLower: List<Double>,
+    val histUpper: List<Double>,
     val futureDays: List<Long>,
     val yhat: List<Double>,
     val lower: List<Double>,
@@ -126,15 +128,12 @@ object Prophet {
             sigma2 = max(rss / n, 1e-8)
         }
         val sigma = sqrt(sigma2)
-        val histFit = List(n) { dot(x[it], theta) * yMax }
+        val fitScaled = DoubleArray(n) { dot(x[it], theta) }
+        val histFit = List(n) { fitScaled[it] * yMax }
 
-        // ---- 未來交易日（略過週末）----
-        val futureDays = ArrayList<Long>()
-        var d = days.last()
-        while (futureDays.size < params.periods) {
-            d++
-            if (DateUtil.dayOfWeek(d) < 5) futureDays.add(d)
-        }
+        // ---- 未來日期：與 Prophet 的 make_future_dataframe 相同，連續的日曆天 ----
+        val lastDay = days.last()
+        val futureDays = List(params.periods) { lastDay + 1 + it }
         val h = futureDays.size
         val tf = DoubleArray(h) { (futureDays[it] - d0) / span }
         val point = DoubleArray(h) { dot(row(futureDays[it].toDouble(), tf[it]), theta) }
@@ -170,10 +169,22 @@ object Prophet {
             upper.add(sim[i][hi] * yMax)
         }
 
+        // 歷史區間：趨勢無不確定性，只含觀測雜訊（Prophet 對樣本內資料的作法）
+        val noise = DoubleArray(samples)
+        val rnd2 = Random(seed + 1)
+        for (i in 0 until samples) noise[i] = rnd2.nextGaussian()
+        noise.sort()
+        val zLo = noise[lo]
+        val zHi = noise[hi]
+        val histLower = List(n) { (fitScaled[it] + sigma * zLo) * yMax }
+        val histUpper = List(n) { (fitScaled[it] + sigma * zHi) * yMax }
+
         return ProphetResult(
             histDays = days,
             histActual = values,
             histFit = histFit,
+            histLower = histLower,
+            histUpper = histUpper,
             futureDays = futureDays,
             yhat = List(h) { point[it] * yMax },
             lower = lower,
