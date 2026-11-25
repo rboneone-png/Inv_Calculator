@@ -387,6 +387,7 @@ private val cOrange = Color(0xFFFB8C00)
 private val cRed = Color(0xFFE53935)
 private val cGreen = Color(0xFF43A047)
 private val cGray = Color(0xFF757575)
+private val cProphet = Color(0xFF0072B2) // Prophet 官方圖的藍色
 
 private fun f2(v: Double) = if (v.isFinite()) String.format(Locale.US, "%.2f", v) else "—"
 
@@ -693,118 +694,76 @@ private fun CapeSection(stock: Stock, bars: List<Bar>) {
 // ---------------------------------------------------------------- 7. Prophet
 
 private sealed interface ProphetState {
-    object Idle : ProphetState
     object Running : ProphetState
     class Failed(val message: String) : ProphetState
-    class Done(val result: ProphetResult) : ProphetState
+    class Done(val result: ProphetResult, val trainDays: Int) : ProphetState
 }
+
+/** 訓練資料取最近約 5 年（1260 個交易日）的日線收盤價。 */
+private const val PROPHET_TRAIN_BARS = 1260
 
 @Composable
 private fun ProphetSection(bars: List<Bar>) {
-    val def = remember { ProphetParams() }
-    var periods by rememberSaveable { mutableStateOf(def.periods.toString()) }
-    var cps by rememberSaveable { mutableStateOf(def.changepointPriorScale.toString()) }
-    var sps by rememberSaveable { mutableStateOf(def.seasonalityPriorScale.toString()) }
-    var ncp by rememberSaveable { mutableStateOf(def.nChangepoints.toString()) }
-    var cpr by rememberSaveable { mutableStateOf(def.changepointRange.toString()) }
-    var iw by rememberSaveable { mutableStateOf(def.intervalWidth.toString()) }
-    var yearly by rememberSaveable { mutableStateOf(def.yearlySeasonality) }
-    var weekly by rememberSaveable { mutableStateOf(def.weeklySeasonality) }
-    var state by remember(bars) { mutableStateOf<ProphetState>(ProphetState.Idle) }
-    val scope = rememberCoroutineScope()
+    var state by remember(bars) { mutableStateOf<ProphetState>(ProphetState.Running) }
 
-    fun parse(): ProphetParams? {
-        val p = periods.toIntOrNull() ?: return null
-        val a = cps.num() ?: return null
-        val b = sps.num() ?: return null
-        val c = ncp.toIntOrNull() ?: return null
-        val d = cpr.num() ?: return null
-        val e = iw.num() ?: return null
-        if (p !in 1..365 || a <= 0 || b <= 0 || c !in 0..100 || d !in 0.1..1.0 || e !in 0.5..0.99) return null
-        return ProphetParams(p, a, b, c, d, e, yearly, weekly)
+    LaunchedEffect(bars) {
+        state = ProphetState.Running
+        state = try {
+            val recent = bars.takeLast(PROPHET_TRAIN_BARS)
+            // 與 Prophet 的 "auto" 相同：資料跨度 ≥ 2 年才啟用年季節性，週季節性一律啟用；其餘為內建預設值
+            val spanDays = recent.last().epochDay - recent.first().epochDay
+            val params = ProphetParams(yearlySeasonality = spanDays >= 730, weeklySeasonality = true)
+            val res = withContext(Dispatchers.Default) {
+                Prophet.fit(recent.map { it.epochDay }, recent.map { it.close }, params)
+            }
+            ProphetState.Done(res, recent.size)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            ProphetState.Failed(e.message ?: "預測失敗")
+        }
     }
 
     SectionCard("7. Prophet 預測") {
         Text(
-            "參數預設值為 Facebook Prophet 建議值，可自行調整後重新預測。",
+            "使用 Facebook Prophet 內建預設參數（changepoint_prior_scale 0.05、seasonality_prior_scale 10、" +
+                "25 個轉折點、轉折點範圍 80%、信賴區間 80%），以近約 5 年日線收盤價訓練，預測未來 90 天。",
             style = MaterialTheme.typography.bodySmall
         )
-        NumField("預測交易日數（1–365，預設 ${def.periods}）", periods) { periods = it }
-        NumField("changepoint_prior_scale（趨勢彈性，預設 ${def.changepointPriorScale}）", cps) { cps = it }
-        NumField("seasonality_prior_scale（季節性強度，預設 ${def.seasonalityPriorScale}）", sps) { sps = it }
-        NumField("n_changepoints（趨勢轉折點數，0–100，預設 ${def.nChangepoints}）", ncp) { ncp = it }
-        NumField("changepoint_range（轉折點範圍 0.1–1，預設 ${def.changepointRange}）", cpr) { cpr = it }
-        NumField("interval_width（信賴區間 0.5–0.99，預設 ${def.intervalWidth}）", iw) { iw = it }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Switch(checked = yearly, onCheckedChange = { yearly = it })
-            Text("  年季節性", style = MaterialTheme.typography.bodyMedium)
-            Switch(checked = weekly, onCheckedChange = { weekly = it }, modifier = Modifier.padding(start = 16.dp))
-            Text("  週季節性", style = MaterialTheme.typography.bodyMedium)
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(
-                enabled = state !is ProphetState.Running,
-                onClick = {
-                    val params = parse()
-                    if (params == null) {
-                        state = ProphetState.Failed("參數無效，請檢查數值範圍")
-                        return@Button
-                    }
-                    state = ProphetState.Running
-                    scope.launch {
-                        state = try {
-                            val res = withContext(Dispatchers.Default) {
-                                Prophet.fit(bars.map { it.epochDay }, bars.map { it.close }, params)
-                            }
-                            ProphetState.Done(res)
-                        } catch (e: CancellationException) {
-                            throw e
-                        } catch (e: Exception) {
-                            ProphetState.Failed(e.message ?: "預測失敗")
-                        }
-                    }
-                }
-            ) { Text("執行預測") }
-            OutlinedButton(onClick = {
-                periods = def.periods.toString(); cps = def.changepointPriorScale.toString()
-                sps = def.seasonalityPriorScale.toString(); ncp = def.nChangepoints.toString()
-                cpr = def.changepointRange.toString(); iw = def.intervalWidth.toString()
-                yearly = def.yearlySeasonality; weekly = def.weeklySeasonality
-            }) { Text("還原預設值") }
-        }
         when (val s = state) {
-            is ProphetState.Idle -> Unit
             is ProphetState.Running -> Text("計算中…")
             is ProphetState.Failed -> Text(s.message, color = MaterialTheme.colorScheme.error)
-            is ProphetState.Done -> ProphetChart(s.result)
+            is ProphetState.Done -> ProphetChart(s.result, s.trainDays)
         }
     }
 }
 
 @Composable
-private fun ProphetChart(r: ProphetResult) {
+private fun ProphetChart(r: ProphetResult, trainDays: Int) {
     val nh = r.histDays.size
     val nf = r.futureDays.size
     val labels = remember(r) { (r.histDays + r.futureDays).map { DateUtil.format(it) } }
-    val actual = remember(r) { r.histActual + List(nf) { Double.NaN } }
+    val nan = Double.NaN
+    val actual = remember(r) { r.histActual + List(nf) { nan } }
     val fit = remember(r) { r.histFit + r.yhat }
-    val bandUp = remember(r) { List(nh) { Double.NaN } + r.upper }
-    val bandLow = remember(r) { List(nh) { Double.NaN } + r.lower }
+    val bandLow = remember(r) { r.histLower + r.lower }
+    val bandUp = remember(r) { r.histUpper + r.upper }
     val end = nf - 1
     Text(
-        "預測 $nf 個交易日後（${DateUtil.format(r.futureDays[end])}）：" +
+        "訓練資料 $trainDays 個交易日；預測 $nf 天後（${DateUtil.format(r.futureDays[end])}）：" +
             "${f2(r.yhat[end])}（區間 ${f2(r.lower[end])} ～ ${f2(r.upper[end])}）",
         style = MaterialTheme.typography.bodyMedium
     )
     ZoomableLineChart(
         labels = labels,
         series = listOf(
-            ChartSeries("實際收盤", cGray, actual, 1.2f),
-            ChartSeries("Prophet 擬合／預測", cOrange, fit, 1.8f)
+            ChartSeries("實際收盤", MaterialTheme.colorScheme.onSurface, actual, dots = true),
+            ChartSeries("預測 yhat", cProphet, fit, 1.6f)
         ),
         band = bandUp to bandLow,
         bandName = "信賴區間",
-        bandColor = cOrange,
-        initialVisible = 250
+        bandColor = cProphet,
+        chartHeight = 300.dp,
+        initialVisible = nh + nf // 與 Prophet 官方圖相同：預設顯示整段歷史與預測
     )
 }

@@ -123,8 +123,8 @@ class StockLogicTest {
         val ys = days.indices.map { 100 + 0.1 * it + rnd.nextGaussian() * 0.5 }
         val r = Prophet.fit(days, ys, ProphetParams(periods = 20))
         assertEquals(20, r.yhat.size)
-        // 預期趨勢約 100 + 0.1 * (399 + 20) = 141.9
-        assertEquals(141.9, r.yhat.last(), 2.0)
+        // 預測 20 個日曆天（約 14.3 個交易日）：100 + 0.1 * (399 + 14.3) ≈ 141.3
+        assertEquals(141.3, r.yhat.last(), 2.0)
         for (i in r.yhat.indices) {
             assertTrue(r.lower[i] < r.yhat[i] && r.yhat[i] < r.upper[i])
         }
@@ -132,9 +132,12 @@ class StockLogicTest {
         var rss = 0.0
         for (i in ys.indices) rss += Math.pow(ys[i] - r.histFit[i], 2.0)
         assertTrue(Math.sqrt(rss / ys.size) < 0.8)
-        // 預測日皆為週一至週五，且接在歷史最後一日之後
-        assertTrue(r.futureDays.first() > days.last())
-        assertTrue(r.futureDays.all { DateUtil.dayOfWeek(it) < 5 })
+        // 預測日為連續日曆天（同 make_future_dataframe），且接在歷史最後一日之後
+        assertEquals((days.last() + 1..days.last() + 20).toList(), r.futureDays)
+        // 歷史區間包住擬合值，且寬度約為 ±1.28σ（80%）
+        for (i in ys.indices) assertTrue(r.histLower[i] < r.histFit[i] && r.histFit[i] < r.histUpper[i])
+        val w = r.histUpper[0] - r.histLower[0]
+        assertTrue(w > 1.0 && w < 2.0)
     }
 
     @Test
