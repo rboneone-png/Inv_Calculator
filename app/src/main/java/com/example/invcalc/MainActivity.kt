@@ -26,7 +26,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
+import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -39,6 +39,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.example.invcalc.stock.ui.StockTab
 import java.util.Locale
 import kotlinx.coroutines.launch
 import kotlin.math.roundToLong
@@ -56,7 +57,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private val tabs = listOf("複利", "定期定額", "報酬率", "貸款", "蛛網")
+private val tabs = listOf("複利", "定期定額", "報酬率", "貸款", "蛛網", "股票分析")
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -69,7 +70,7 @@ fun App() {
             style = MaterialTheme.typography.titleLarge,
             modifier = Modifier.padding(16.dp)
         )
-        TabRow(selectedTabIndex = pagerState.currentPage) {
+        ScrollableTabRow(selectedTabIndex = pagerState.currentPage, edgePadding = 8.dp) {
             tabs.forEachIndexed { i, title ->
                 Tab(
                     selected = pagerState.currentPage == i,
@@ -85,14 +86,15 @@ fun App() {
                 1 -> DcaScreen()
                 2 -> ReturnScreen()
                 3 -> LoanScreen()
-                else -> GridScreen()
+                4 -> GridScreen()
+                else -> StockTab()
             }
         }
     }
 }
 
 @Composable
-private fun ScreenColumn(content: @Composable () -> Unit) {
+internal fun ScreenColumn(content: @Composable () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -103,7 +105,7 @@ private fun ScreenColumn(content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun NumField(label: String, value: String, onChange: (String) -> Unit) {
+internal fun NumField(label: String, value: String, onChange: (String) -> Unit) {
     OutlinedTextField(
         value = value,
         onValueChange = onChange,
@@ -115,7 +117,7 @@ private fun NumField(label: String, value: String, onChange: (String) -> Unit) {
 }
 
 @Composable
-private fun ResultCard(lines: List<Pair<String, String>>?) {
+internal fun ResultCard(lines: List<Pair<String, String>>?) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (lines == null) {
@@ -130,9 +132,9 @@ private fun ResultCard(lines: List<Pair<String, String>>?) {
     }
 }
 
-private fun money(v: Double) = String.format(Locale.US, "%,.2f", v)
-private fun pct(v: Double) = String.format(Locale.US, "%.2f%%", v)
-private fun String.num(): Double? = toDoubleOrNull()?.takeIf { it.isFinite() }
+internal fun money(v: Double) = String.format(Locale.US, "%,.2f", v)
+internal fun pct(v: Double) = String.format(Locale.US, "%.2f%%", v)
+internal fun String.num(): Double? = toDoubleOrNull()?.takeIf { it.isFinite() }
 
 @Composable
 fun CompoundScreen() {
