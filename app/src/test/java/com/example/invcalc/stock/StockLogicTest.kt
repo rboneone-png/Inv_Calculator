@@ -122,7 +122,8 @@ class StockLogicTest {
         val rnd = Random(1)
         val ys = days.indices.map { 100 + 0.1 * it + rnd.nextGaussian() * 0.5 }
         val r = Prophet.fit(days, ys, ProphetParams(periods = 20))
-        assertEquals(20, r.yhat.size)
+        assertEquals(r.futureDays.size, r.yhat.size)
+        assertTrue(r.futureDays.size in 14..15) // 20 個日曆天約 14 個交易日
         // 預測 20 個日曆天（約 14.3 個交易日）：100 + 0.1 * (399 + 14.3) ≈ 141.3
         assertEquals(141.3, r.yhat.last(), 2.0)
         for (i in r.yhat.indices) {
@@ -132,8 +133,9 @@ class StockLogicTest {
         var rss = 0.0
         for (i in ys.indices) rss += Math.pow(ys[i] - r.histFit[i], 2.0)
         assertTrue(Math.sqrt(rss / ys.size) < 0.8)
-        // 預測日為連續日曆天（同 make_future_dataframe），且接在歷史最後一日之後
-        assertEquals((days.last() + 1..days.last() + 20).toList(), r.futureDays)
+        // 預測日為預測期間內的交易日（不含週六日，避免週季節性在週末失真），且接在歷史最後一日之後
+        assertEquals((days.last() + 1..days.last() + 20).filter { DateUtil.dayOfWeek(it) < 5 }, r.futureDays)
+        assertTrue(r.futureDays.all { DateUtil.dayOfWeek(it) < 5 })
         // 歷史區間包住擬合值，且寬度約為 ±1.28σ（80%）
         for (i in ys.indices) assertTrue(r.histLower[i] < r.histFit[i] && r.histFit[i] < r.histUpper[i])
         val w = r.histUpper[0] - r.histLower[0]
@@ -367,5 +369,18 @@ class StockLogicTest {
         val r5 = Indicators.bollinger(bars, 5, 2.0)!!
         assertEquals(6, r5.dates.size)
         assertEquals(4L, r5.dates.first())
+    }
+
+    @Test
+    fun prophetForecastHasNoWeekendSawtooth() {
+        // 帶週內效應的資料：預測線不應出現大幅鋸齒
+        val days = weekdays(500)
+        val rnd = Random(11)
+        val ys = days.indices.map { 100 + 0.05 * it + (if (DateUtil.dayOfWeek(days[it]) == 0) 0.5 else 0.0) + rnd.nextGaussian() * 0.3 }
+        val r = Prophet.fit(days, ys, ProphetParams(periods = 90))
+        assertTrue(r.futureDays.all { DateUtil.dayOfWeek(it) < 5 })
+        var maxJump = 0.0
+        for (i in 1 until r.yhat.size) maxJump = Math.max(maxJump, Math.abs(r.yhat[i] - r.yhat[i - 1]))
+        assertTrue("相鄰預測點落差過大：$maxJump", maxJump < 2.0)
     }
 }

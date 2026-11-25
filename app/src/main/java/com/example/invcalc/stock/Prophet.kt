@@ -15,7 +15,7 @@ import kotlin.math.sqrt
 
 /** 參數與預設值皆取自 Facebook Prophet 的建議預設值。 */
 data class ProphetParams(
-    val periods: Int = 90,                       // 預測天數（日曆天，同 make_future_dataframe）
+    val periods: Int = 90,                       // 預測期間（日曆天）；只取其中的交易日（週一至週五）
     val changepointPriorScale: Double = 0.05,    // changepoint_prior_scale
     val seasonalityPriorScale: Double = 10.0,    // seasonality_prior_scale
     val nChangepoints: Int = 25,                 // n_changepoints
@@ -131,9 +131,11 @@ object Prophet {
         val fitScaled = DoubleArray(n) { dot(x[it], theta) }
         val histFit = List(n) { fitScaled[it] * yMax }
 
-        // ---- 未來日期：與 Prophet 的 make_future_dataframe 相同，連續的日曆天 ----
+        // ---- 未來日期：預測期間內的交易日（週一至週五）----
+        // 股價資料沒有週末，週季節性對週六日沒有任何訓練資料，若預測週末會嚴重失真（鋸齒狀）。
         val lastDay = days.last()
-        val futureDays = List(params.periods) { lastDay + 1 + it }
+        val futureDays = (1..params.periods).map { lastDay + it }.filter { DateUtil.dayOfWeek(it) < 5 }
+        require(futureDays.isNotEmpty()) { "預測期間內沒有交易日" }
         val h = futureDays.size
         val tf = DoubleArray(h) { (futureDays[it] - d0) / span }
         val point = DoubleArray(h) { dot(row(futureDays[it].toDouble(), tf[it]), theta) }
