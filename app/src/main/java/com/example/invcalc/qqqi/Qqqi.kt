@@ -110,7 +110,7 @@ object QqqiCalc {
         val shares: Long,          // C 股數
         val monthlyUsd: Double,    // E 月股息收入（USD）
         val monthlyNt: Long,       // F 月股息收入（NT）
-        val yearlyNt: Long,        // G 年利息（NT）
+        val yearlyNt: Long,        // G 年股息（NT）
         val investedNt: Double     // 實際買入金額（NT，參考）
     )
 
