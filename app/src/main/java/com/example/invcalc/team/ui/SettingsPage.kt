@@ -42,6 +42,12 @@ object VersionNotes {
 
     val entries = listOf(
         Entry(
+            "1.2.1",
+            listOf(
+                "QQQI 分頁新增貸款估算：貸款金額（= 投入金額）、利率、期數 → 每月繳款（本息平均攤還，四捨五入），並算出每月平衡預估（= 每月股息收入 − 每月繳款）"
+            )
+        ),
+        Entry(
             "1.2.0",
             listOf(
                 "新增「QQQI」分頁：輸入投入金額（NT），自動換算股數、月股息收入（USD／NT）與年利息（NT）",

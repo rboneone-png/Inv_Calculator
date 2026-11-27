@@ -43,6 +43,8 @@ object QqqiSession {
     var priceText by mutableStateOf("")          // B QQQI 股價（USD）
     var divText by mutableStateOf("")            // D 月股息（平均值，USD）
     var fxText by mutableStateOf("32")           // H 匯率（USD → NT）
+    var rateText by mutableStateOf("")           // J 利率（年利率 %）
+    var monthsText by mutableStateOf("")         // K 貸款期數（月）
 
     var status by mutableStateOf("")
     var fxNote by mutableStateOf("")
@@ -112,6 +114,23 @@ object QqqiSession {
 private fun fmtInt(v: Long) = String.format(Locale.US, "%,d", v)
 private fun fmtNt(v: Long) = "NT$ " + fmtInt(v)
 
+/** 整數金額不顯示小數，否則顯示到小數 2 位。 */
+private fun fmtAmount(v: Double): String =
+    if (v == Math.floor(v)) String.format(Locale.US, "%,.0f", v) else String.format(Locale.US, "%,.2f", v)
+
+/** 期數只接受整數。 */
+@Composable
+private fun OutlinedMonths(value: String, onChange: (String) -> Unit) {
+    androidx.compose.material3.OutlinedTextField(
+        value = value,
+        onValueChange = { onChange(it.filter(Char::isDigit)) },
+        label = { Text("K　貸款期數（月）") },
+        singleLine = true,
+        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
+        modifier = Modifier.fillMaxWidth()
+    )
+}
+
 @Composable
 fun QqqiTab() {
     val s = QqqiSession
@@ -166,6 +185,47 @@ fun QqqiTab() {
             }
         }
 
+        // ---------------------------------------------------------------- 貸款估算
+        val j = s.rateText.num()
+        val k = s.monthsText.toIntOrNull()
+        val loanOk = a != null && j != null && k != null && k in 1..1200
+        val l = if (loanOk) QqqiCalc.loanPayment(a!!, j!!, k!!) else null
+        val m = if (l != null && r != null) QqqiCalc.monthlyBalance(r.monthlyNt, l) else null
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("貸款估算", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text("假設以貸款方式取得投入金額，用每月股息收入來支應每月繳款。", style = MaterialTheme.typography.bodySmall)
+                ResultRow(
+                    "I　貸款金額（NT）",
+                    if (a != null) "NT$ " + fmtAmount(a) else "—",
+                    "I = A（同投入金額）"
+                )
+                NumField("J　利率（年利率 %）", s.rateText) { s.rateText = it }
+                OutlinedMonths(s.monthsText) { s.monthsText = it }
+                if (!loanOk) {
+                    Text("請輸入利率（≥ 0）與貸款期數（1–1200 個月的整數），才會計算每月繳款。", style = MaterialTheme.typography.bodySmall)
+                } else if (l != null) {
+                    ResultRow("L　每月繳款（NT）", fmtNt(l), "本息平均攤還，小數點四捨五入")
+                    if (m != null) {
+                        ResultRow(
+                            "M　每月平衡預估（NT）",
+                            if (m >= 0) "NT$ +" + fmtInt(m) else "-NT$ " + fmtInt(-m),
+                            "M = F − L（每月股息收入 − 每月繳款）",
+                            highlight = true,
+                            valueColor = if (m >= 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                        )
+                        Text(
+                            if (m >= 0) "每月股息收入足以支應繳款，約結餘 NT$ ${fmtInt(m)}。"
+                            else "每月股息收入不足以支應繳款，每月約需自行補貼 NT$ ${fmtInt(-m)}。",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    } else {
+                        Text("上方的股息試算尚無有效結果，無法計算每月平衡。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                    }
+                }
+            }
+        }
+
         // ---------------------------------------------------------------- 配息明細
         val last = QqqiApi.lastDividends(s.allDividends)
         Collapsible(
@@ -187,14 +247,20 @@ fun QqqiTab() {
         }
 
         Text(
-            "提醒：QQQI 每月配息金額會變動，過去配息不代表未來；試算未計入股息預扣稅、手續費與匯差，僅供參考，不構成投資建議。",
+            "提醒：QQQI 每月配息金額會變動，過去配息不代表未來；試算未計入股息預扣稅、手續費、匯差與貸款相關費用，僅供參考，不構成投資建議。",
             style = MaterialTheme.typography.bodySmall
         )
     }
 }
 
 @Composable
-private fun ResultRow(label: String, value: String, formula: String, highlight: Boolean = false) {
+private fun ResultRow(
+    label: String,
+    value: String,
+    formula: String,
+    highlight: Boolean = false,
+    valueColor: androidx.compose.ui.graphics.Color = androidx.compose.ui.graphics.Color.Unspecified
+) {
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
@@ -202,7 +268,8 @@ private fun ResultRow(label: String, value: String, formula: String, highlight: 
                 value,
                 style = if (highlight) MaterialTheme.typography.titleLarge else MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
-                color = if (highlight) MaterialTheme.colorScheme.primary else androidx.compose.ui.graphics.Color.Unspecified
+                color = if (valueColor != androidx.compose.ui.graphics.Color.Unspecified) valueColor
+                else if (highlight) MaterialTheme.colorScheme.primary else androidx.compose.ui.graphics.Color.Unspecified
             )
         }
         Text(formula, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

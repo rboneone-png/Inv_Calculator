@@ -3,6 +3,7 @@ package com.example.invcalc.qqqi
 import com.example.invcalc.stock.Http
 import org.json.JSONObject
 import java.math.BigDecimal
+import java.math.MathContext
 import java.math.RoundingMode
 import java.net.URLEncoder
 
@@ -132,4 +133,29 @@ object QqqiCalc {
     /** 把數字轉成不含科學記號的字串（供輸入欄位使用）。 */
     fun plain(v: Double, scale: Int): String =
         BigDecimal.valueOf(v).setScale(scale, RoundingMode.HALF_UP).stripTrailingZeros().toPlainString()
+
+    /**
+     * L 每月繳款：本息平均攤還，小數點四捨五入。
+     *  月利率 i = 年利率 ÷ 12；每月繳款 = I × i × (1+i)^K ÷ ((1+i)^K − 1)；利率為 0 時 = I ÷ K。
+     * 輸入無效（金額 < 0、利率 < 0、期數 < 1）時回傳 null。
+     */
+    fun loanPayment(principalNt: Double, annualRatePct: Double, months: Int): Long? {
+        if (!(principalNt >= 0.0 && annualRatePct >= 0.0 && months >= 1)) return null
+        if (!(principalNt.isFinite() && annualRatePct.isFinite())) return null
+        val mc = MathContext(40)
+        val p = BigDecimal.valueOf(principalNt)
+        val i = BigDecimal.valueOf(annualRatePct).divide(BigDecimal(1200), mc)
+        val pay = if (i.signum() == 0) {
+            p.divide(BigDecimal(months), mc)
+        } else {
+            val base = BigDecimal.ONE.add(i)
+            var pow = BigDecimal.ONE
+            repeat(months) { pow = pow.multiply(base, mc) }
+            p.multiply(i, mc).multiply(pow, mc).divide(pow.subtract(BigDecimal.ONE, mc), mc)
+        }
+        return pay.setScale(0, RoundingMode.HALF_UP).toLong()
+    }
+
+    /** M 每月平衡預估 = F（每月股息收入 NT）− L（每月繳款）。負數代表每月需自行補貼。 */
+    fun monthlyBalance(monthlyDividendNt: Long, monthlyPaymentNt: Long): Long = monthlyDividendNt - monthlyPaymentNt
 }
