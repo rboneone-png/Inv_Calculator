@@ -5,7 +5,15 @@ import java.util.Locale
 data class Stock(val symbol: String, val name: String)
 
 /** 一根 K 棒（日線，或重新取樣後的週／月／年線）。 */
-data class Bar(val epochDay: Long, val close: Double, val adjClose: Double, val volume: Double)
+data class Bar(
+    val epochDay: Long,
+    val close: Double,
+    val adjClose: Double,
+    val volume: Double,
+    val open: Double = close,
+    val high: Double = close,
+    val low: Double = close
+)
 
 enum class Period(val label: String, val periodsPerYear: Int, val sharpeWindow: Int) {
     DAY("日線", 252, 60),
