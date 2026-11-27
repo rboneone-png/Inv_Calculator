@@ -158,4 +158,23 @@ object QqqiCalc {
 
     /** M 每月平衡預估 = F（每月股息收入 NT）− L（每月繳款）。負數代表每月需自行補貼。 */
     fun monthlyBalance(monthlyDividendNt: Long, monthlyPaymentNt: Long): Long = monthlyDividendNt - monthlyPaymentNt
+
+    /** P 公式中的係數。 */
+    const val P_FACTOR = "0.95"
+    const val DEFAULT_TAX_PCT = 30.0 // O 美國預扣稅率預設值（%）
+
+    /**
+     * N 月預扣稅股息（NT）= F × O，小數點四捨五入。O 為美國預扣稅率（%，0–100）。
+     * 稅率不在 0–100 之間時回傳 null。
+     */
+    fun withholdingNt(monthlyNt: Long, taxRatePct: Double): Long? {
+        if (!(taxRatePct.isFinite() && taxRatePct >= 0.0 && taxRatePct <= 100.0) || monthlyNt < 0) return null
+        return BigDecimal(monthlyNt).multiply(BigDecimal.valueOf(taxRatePct)).divide(BigDecimal(100))
+            .setScale(0, RoundingMode.HALF_UP).toLong()
+    }
+
+    /** P 年預扣總額（NT）= (F − N) × 0.95 × 12，小數點四捨五入（只在最後取整一次）。 */
+    fun annualWithheldTotal(monthlyNt: Long, withholdingNt: Long): Long =
+        BigDecimal(monthlyNt - withholdingNt).multiply(BigDecimal(P_FACTOR)).multiply(BigDecimal(12))
+            .setScale(0, RoundingMode.HALF_UP).toLong()
 }

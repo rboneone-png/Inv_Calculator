@@ -43,8 +43,9 @@ object QqqiSession {
     var priceText by mutableStateOf("")          // B QQQI 股價（USD）
     var divText by mutableStateOf("")            // D 月股息（平均值，USD）
     var fxText by mutableStateOf("32")           // H 匯率（USD → NT）
-    var rateText by mutableStateOf("")           // J 利率（年利率 %）
-    var monthsText by mutableStateOf("")         // K 貸款期數（月）
+    var taxText by mutableStateOf("30")          // O 美國預扣稅率（%）
+    var rateText by mutableStateOf("4")          // J 利率（年利率 %），預設 4%
+    var monthsText by mutableStateOf("84")       // K 貸款期數（月），預設 84
 
     var status by mutableStateOf("")
     var fxNote by mutableStateOf("")
@@ -141,6 +142,9 @@ fun QqqiTab() {
     val d = s.divText.num()
     val h = s.fxText.num()
     val r = if (a != null && b != null && d != null && h != null) QqqiCalc.compute(a, h, b, d) else null
+    val o = s.taxText.num()
+    val nVal = if (r != null && o != null) QqqiCalc.withholdingNt(r.monthlyNt, o) else null
+    val pVal = if (r != null && nVal != null) QqqiCalc.annualWithheldTotal(r.monthlyNt, nVal) else null
 
     ScreenColumn {
         Text("QQQI 股息試算", style = MaterialTheme.typography.titleLarge)
@@ -156,6 +160,7 @@ fun QqqiTab() {
                 NumField("B　QQQI 股價（USD，自動取得，可修改）", s.priceText) { s.priceText = it }
                 NumField("H　匯率（USD → NT，取不到時預設 32）", s.fxText) { s.fxText = it }
                 NumField("D　月股息・平均值（USD，近 6 個月配息平均）", s.divText) { s.divText = it }
+                NumField("O　美國預扣稅率（%，預設 30）", s.taxText) { s.taxText = it }
                 if (s.fxNote.isNotBlank()) Text(s.fxNote, style = MaterialTheme.typography.bodySmall)
                 if (s.status.isNotBlank()) Text(s.status, style = MaterialTheme.typography.bodySmall)
                 if (s.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -175,7 +180,21 @@ fun QqqiTab() {
                     ResultRow("C　股數（股）", "${fmtInt(r.shares)} 股", "C = A ÷ H ÷ B，小數點捨去")
                     ResultRow("E　月股息收入（USD）", "US$ " + String.format(Locale.US, "%,.2f", r.monthlyUsd), "E = C × D")
                     ResultRow("F　月股息收入（NT）", fmtNt(r.monthlyNt), "F = E × H，小數點四捨五入")
+                    ResultRow(
+                        "N　月預扣稅股息（NT）",
+                        if (nVal != null) fmtNt(nVal) else "—",
+                        "N = F × O，小數點四捨五入"
+                    )
                     ResultRow("G　年股息（NT）", fmtNt(r.yearlyNt), "G = F × 12，小數點四捨五入", highlight = true)
+                    ResultRow(
+                        "P　年預扣總額（NT）",
+                        if (pVal != null) fmtNt(pVal) else "—",
+                        "P = (F − N) × 0.95 × 12，小數點四捨五入",
+                        highlight = true
+                    )
+                    if (nVal == null) {
+                        Text("請輸入 0–100 之間的美國預扣稅率（O），才會計算 N 與 P。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                    }
                     Text(
                         "實際買入約 NT$ ${String.format(Locale.US, "%,.0f", r.investedNt)}" +
                             "（${fmtInt(r.shares)} 股，零頭約 NT$ ${String.format(Locale.US, "%,.0f", (a ?: 0.0) - r.investedNt)} 未使用）",
