@@ -6,27 +6,29 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -34,8 +36,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.example.invcalc.NumField
 import com.example.invcalc.ScreenColumn
@@ -70,6 +70,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 
 private const val MAX_STOCKS = 5
@@ -121,7 +123,9 @@ object TeamSession {
         return TeamPipeline.analyze(st, bars, idx, indexName, years, news, settings)
     }
 
-    fun run(stocks: List<Stock>, settings: TeamSettings, apiKey: String, model: String) {
+    private val gate = Semaphore(3) // 不限檔數，但同時最多連線 3 檔，避免被資料來源限流
+
+    fun run(stocks: List<Stock>, settings: TeamSettings, apiKey: String, model: String, onDone: suspend () -> Unit = {}) {
         if (running) return
         running = true
         results = emptyList()
@@ -135,7 +139,7 @@ object TeamSession {
                     stocks.map { st ->
                         async(Dispatchers.IO) {
                             try {
-                                Result.success(load(st, settings))
+                                Result.success(gate.withPermit { load(st, settings) })
                             } catch (e: CancellationException) {
                                 throw e
                             } catch (e: Exception) {
@@ -190,6 +194,15 @@ object TeamSession {
                 } else if (ok.isNotEmpty()) {
                     status = "完成（未填 API Key，使用程式內建的文字解讀）"
                 }
+                if (ok.isNotEmpty()) {
+                    try {
+                        onDone()
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        errors = errors + "完成後動作失敗：${e.message}"
+                    }
+                }
             } finally {
                 running = false
                 aiTick++
@@ -198,159 +211,271 @@ object TeamSession {
     }
 }
 
+
+// ---------------------------------------------------------------------------------------------- Email／下載
+
+/** 產生報告並開啟寄信畫面（需在協程中呼叫）。回傳給使用者看的訊息。 */
+private suspend fun emailReport(context: Context, prefs: TeamPrefs): String {
+    val settings = TeamSession.usedSettings ?: return "尚無分析結果，請先按「分析」"
+    val analyses = TeamSession.results.map { it.analysis }
+    if (analyses.isEmpty()) return "尚無分析結果，請先按「分析」"
+    val format = ReportFormat.fromIndex(prefs.emailFormat)
+    val date = ReportBuilder.todayText(System.currentTimeMillis())
+    val overall = TeamSession.overallAi
+    val file = withContext(Dispatchers.IO) {
+        val data = ReportExport.bytes(format, analyses, settings, overall, date)
+        ReportExport.cacheFile(context, ReportExport.fileName(format, date), data)
+    }
+    val subject = com.example.invcalc.team.Recipients.subject(prefs.emailSubject, date, TeamPrefs.DEFAULT_SUBJECT)
+    val body = buildString {
+        appendLine("AI 金融分析團隊投資報告（$date）")
+        if (prefs.emailSummary) {
+            appendLine()
+            append(ReportBuilder.rankingFacts(analyses, settings))
+        }
+        appendLine()
+        append(ReportBuilder.DISCLAIMER)
+    }
+    val to = TeamPrefs.parseRecipients(prefs.emailTo)
+    EmailSender.send(context, to, subject, body, file)
+    return if (to.isEmpty()) "已開啟寄信畫面（尚未在設定填收件人，請在信件中輸入）" else "已開啟寄信畫面"
+}
+
+@Composable
+private fun DownloadDialog(hasResults: Boolean, onPick: (ReportFormat?) -> Unit, onEmail: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("下載報告") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (!hasResults) {
+                    Text("尚無分析結果，請先按下方的「分析」。")
+                } else {
+                    TextButton(onClick = { onPick(ReportFormat.PDF) }, modifier = Modifier.fillMaxWidth()) { Text("📄  PDF（建議）", modifier = Modifier.fillMaxWidth()) }
+                    TextButton(onClick = { onPick(ReportFormat.MARKDOWN) }, modifier = Modifier.fillMaxWidth()) { Text("📝  Markdown", modifier = Modifier.fillMaxWidth()) }
+                    TextButton(onClick = { onPick(ReportFormat.HTML) }, modifier = Modifier.fillMaxWidth()) { Text("🌐  HTML", modifier = Modifier.fillMaxWidth()) }
+                    TextButton(onClick = onEmail, modifier = Modifier.fillMaxWidth()) { Text("✉️  以 Email 寄送", modifier = Modifier.fillMaxWidth()) }
+                    Text("PDF 為文字版報告（含排名、各分析師指標與發現）；圖表請在畫面上查看。", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("關閉") } }
+    )
+}
+
+// ---------------------------------------------------------------------------------------------- 主畫面
+
 @Composable
 fun TeamTab() {
     val context = LocalContext.current
+    val prefs = remember { TeamPrefs(context) }
     val store = remember { StockStore(context) }
-    val prefs = remember { context.getSharedPreferences("ai_team", Context.MODE_PRIVATE) }
-    var watch by remember { mutableStateOf(store.load()) }
-    var apiKey by remember { mutableStateOf(prefs.getString("api_key", "") ?: "") }
-    var model by remember { mutableStateOf(prefs.getString("model", ClaudeClient.DEFAULT_MODEL) ?: ClaudeClient.DEFAULT_MODEL) }
+    val scope = rememberCoroutineScope()
+    var page by rememberSaveable { mutableIntStateOf(0) } // 0 = 分析、1 = 設定
+    var showDownload by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf("") }
     val s = TeamSession
 
-    fun writeTo(uri: Uri?, text: String) {
+    fun startAnalysis() {
+        page = 0
+        val stocks = store.load().filter { it.symbol in s.selected }
+        if (stocks.isEmpty()) {
+            message = "請先在「選擇股票」勾選至少一檔股票，再按「分析」"
+            return
+        }
+        if (s.running) {
+            message = "分析進行中，請稍候…"
+            return
+        }
+        message = ""
+        s.run(
+            stocks,
+            TeamSettings(Horizon.values()[s.horizonIdx], RiskProfile.values()[s.riskIdx], s.rfText.num() ?: 1.5),
+            prefs.apiKey,
+            prefs.model.ifBlank { ClaudeClient.DEFAULT_MODEL },
+            onDone = {
+                if (prefs.emailAuto) message = emailReport(context.applicationContext, prefs)
+            }
+        )
+    }
+
+    fun save(uri: Uri?, format: ReportFormat) {
         if (uri == null) return
-        message = try {
-            context.contentResolver.openOutputStream(uri)?.use { it.write(text.toByteArray(Charsets.UTF_8)) }
-            "已儲存報告"
-        } catch (e: Exception) {
-            "儲存失敗：${e.message}"
+        val settings = s.usedSettings ?: return
+        val analyses = s.results.map { it.analysis }
+        val overall = s.overallAi
+        val date = ReportBuilder.todayText(System.currentTimeMillis())
+        scope.launch {
+            message = try {
+                withContext(Dispatchers.IO) {
+                    ReportExport.writeToUri(context, uri, ReportExport.bytes(format, analyses, settings, overall, date))
+                }
+                "已儲存 ${format.label} 報告"
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                "儲存失敗：${e.message}"
+            }
         }
     }
 
-    val analyses = s.results.map { it.analysis }
-    val dateText = ReportBuilder.todayText(System.currentTimeMillis())
-    val mdLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/markdown")) { uri ->
-        s.usedSettings?.let { writeTo(uri, ReportBuilder.markdown(analyses, it, s.overallAi, dateText)) }
+    val pdfLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { save(it, ReportFormat.PDF) }
+    val mdLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/markdown")) { save(it, ReportFormat.MARKDOWN) }
+    val htmlLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/html")) { save(it, ReportFormat.HTML) }
+
+    Column(Modifier.fillMaxSize()) {
+        if (message.isNotBlank()) {
+            Text(
+                message,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)
+            )
+        }
+        Box(Modifier.weight(1f)) {
+            if (page == 0) AnalysisPage(store) else SettingsPage(prefs, onBack = { page = 0 })
+        }
+        // 固定在最下方：下載／分析／設定
+        NavigationBar {
+            NavigationBarItem(
+                selected = false,
+                onClick = { showDownload = true },
+                icon = { Text("📥") },
+                label = { Text("下載") }
+            )
+            NavigationBarItem(
+                selected = page == 0,
+                onClick = { startAnalysis() },
+                icon = { Text(if (s.running) "⏳" else "▶️") },
+                label = { Text(if (s.running) "分析中" else "分析") }
+            )
+            NavigationBarItem(
+                selected = page == 1,
+                onClick = { page = if (page == 1) 0 else 1 },
+                icon = { Text("⚙️") },
+                label = { Text("設定") }
+            )
+        }
     }
-    val htmlLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/html")) { uri ->
-        s.usedSettings?.let { writeTo(uri, ReportBuilder.html(analyses, it, s.overallAi, dateText)) }
+
+    if (showDownload) {
+        val date = ReportBuilder.todayText(System.currentTimeMillis())
+        DownloadDialog(
+            hasResults = s.results.isNotEmpty(),
+            onPick = { f ->
+                showDownload = false
+                when (f) {
+                    ReportFormat.PDF -> pdfLauncher.launch(ReportExport.fileName(ReportFormat.PDF, date))
+                    ReportFormat.MARKDOWN -> mdLauncher.launch(ReportExport.fileName(ReportFormat.MARKDOWN, date))
+                    ReportFormat.HTML -> htmlLauncher.launch(ReportExport.fileName(ReportFormat.HTML, date))
+                    null -> Unit
+                }
+            },
+            onEmail = {
+                showDownload = false
+                scope.launch {
+                    message = try {
+                        emailReport(context, prefs)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        "寄信失敗：${e.message}"
+                    }
+                }
+            },
+            onDismiss = { showDownload = false }
+        )
     }
+}
+
+// ---------------------------------------------------------------------------------------------- 分析頁
+
+@Composable
+private fun AnalysisPage(store: StockStore) {
+    val s = TeamSession
+    var watch by remember { mutableStateOf(store.load()) }
 
     ScreenColumn {
         Text("AI 金融分析團隊", style = MaterialTheme.typography.titleLarge)
-        Text(
-            "📈 技術、🧾 財報、🌐 市場趨勢、🛡️ 風險四位分析師各自分析，🧠 投資組長依你的「持有期間 × 風險承受度」加權整合，" +
-                "給出評級、部位上限與參考價位。數字與評分全部由程式計算、可以驗證；Claude（選用）只負責用白話文解讀。",
-            style = MaterialTheme.typography.bodySmall
-        )
 
-        // ---- 選股 ----
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("選擇股票（最多 $MAX_STOCKS 檔，已選 ${s.selected.size}）", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                    TextButton(onClick = { watch = store.load() }) { Text("重新載入") }
-                }
-                if (watch.isEmpty()) {
-                    Text("自選股清單是空的，請先到「股票分析」分頁新增股票，再回到這裡。", style = MaterialTheme.typography.bodyMedium)
-                }
-                watch.forEach { st ->
-                    val checked = st.symbol in s.selected
-                    Row(
-                        Modifier.fillMaxWidth().clickable(enabled = checked || s.selected.size < MAX_STOCKS) {
-                            s.selected = if (checked) s.selected - st.symbol else s.selected + st.symbol
-                        },
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Checkbox(
-                            checked = checked,
-                            enabled = checked || s.selected.size < MAX_STOCKS,
-                            onCheckedChange = { s.selected = if (it) s.selected + st.symbol else s.selected - st.symbol }
-                        )
-                        Text("${st.name.ifBlank { st.symbol }}（${st.symbol}）", style = MaterialTheme.typography.bodyMedium)
-                    }
+        Collapsible("團隊介紹", subtitle = "四位分析師＋投資組長，數字由程式計算", key = "team:intro") {
+            Text(
+                "📈 技術分析師：均線、RSI、MACD、布林通道、量能\n" +
+                    "🧾 財報分析師：本益比、ROE、淨利率、營收成長、負債、自由現金流\n" +
+                    "🌐 市場趨勢分析師：多期間報酬、相對大盤強弱、Beta、新聞情緒\n" +
+                    "🛡️ 風險分析師：波動率、最大跌幅、VaR、夏普值\n" +
+                    "🧠 投資組長：依「持有期間 × 風險承受度」加權整合，給出評級、部位上限與參考價位（支撐、壓力、停損）",
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Text(
+                "數字與評分全部由程式計算、可以驗證；Claude（選用，於「設定」填 API Key）只負責用白話文解讀，不負責算數。" +
+                    "選好股票後按下方的「分析」開始。",
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+
+        Collapsible("選擇股票", subtitle = "已選 ${s.selected.size} 檔／共 ${watch.size} 檔（不限檔數）", key = "team:select") {
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                TextButton(onClick = { s.selected = watch.map { it.symbol } }) { Text("全選") }
+                TextButton(onClick = { s.selected = emptyList() }) { Text("清除") }
+                TextButton(onClick = { watch = store.load() }) { Text("重新載入") }
+            }
+            if (watch.isEmpty()) {
+                Text("自選股清單是空的，請先到「股票分析」分頁新增股票，再回到這裡按「重新載入」。", style = MaterialTheme.typography.bodyMedium)
+            }
+            watch.forEach { st ->
+                val checked = st.symbol in s.selected
+                Row(
+                    Modifier.fillMaxWidth().clickable {
+                        s.selected = if (checked) s.selected - st.symbol else s.selected + st.symbol
+                    },
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Checkbox(
+                        checked = checked,
+                        onCheckedChange = { s.selected = if (it) s.selected + st.symbol else s.selected - st.symbol }
+                    )
+                    Text("${st.name.ifBlank { st.symbol }}（${st.symbol}）", style = MaterialTheme.typography.bodyMedium)
                 }
             }
         }
 
-        // ---- 設定 ----
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("持有期間", style = MaterialTheme.typography.titleMedium)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Horizon.values().forEachIndexed { i, h ->
-                        FilterChip(selected = s.horizonIdx == i, onClick = { s.horizonIdx = i }, label = { Text(h.label.substringBefore("（")) })
-                    }
+        Collapsible(
+            "分析條件",
+            subtitle = "${Horizon.values()[s.horizonIdx].label.substringBefore("（")} × ${RiskProfile.values()[s.riskIdx].label}",
+            key = "team:conditions"
+        ) {
+            Text("持有期間", style = MaterialTheme.typography.titleSmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Horizon.values().forEachIndexed { i, h ->
+                    FilterChip(selected = s.horizonIdx == i, onClick = { s.horizonIdx = i }, label = { Text(h.label.substringBefore("（")) })
                 }
-                Text(Horizon.values()[s.horizonIdx].label, style = MaterialTheme.typography.bodySmall)
-                Text("風險承受度", style = MaterialTheme.typography.titleMedium)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    RiskProfile.values().forEachIndexed { i, r ->
-                        FilterChip(selected = s.riskIdx == i, onClick = { s.riskIdx = i }, label = { Text(r.label) })
-                    }
-                }
-                NumField("無風險利率（年化 %，用於夏普值）", s.rfText) { s.rfText = it }
             }
+            Text(Horizon.values()[s.horizonIdx].label, style = MaterialTheme.typography.bodySmall)
+            Text("風險承受度", style = MaterialTheme.typography.titleSmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                RiskProfile.values().forEachIndexed { i, r ->
+                    FilterChip(selected = s.riskIdx == i, onClick = { s.riskIdx = i }, label = { Text(r.label) })
+                }
+            }
+            NumField("無風險利率（年化 %，用於夏普值）", s.rfText) { s.rfText = it }
         }
 
-        // ---- Claude（選用）----
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Claude API（選用）", style = MaterialTheme.typography.titleMedium)
-                Text(
-                    "不填也能完整運作。填入後，分析師與組長會用白話文解讀並寫出更完整的報告（會把程式算好的數據摘要送到 Anthropic API，" +
-                        "不包含任何個人資料）。Key 只存在這支手機的 App 私有儲存空間。",
-                    style = MaterialTheme.typography.bodySmall
-                )
-                OutlinedTextField(
-                    value = apiKey,
-                    onValueChange = { apiKey = it; prefs.edit().putString("api_key", it.trim()).apply() },
-                    label = { Text("Claude API Key（sk-ant-…）") },
-                    singleLine = true,
-                    visualTransformation = PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                    modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = model,
-                    onValueChange = { model = it; prefs.edit().putString("model", it.trim()).apply() },
-                    label = { Text("模型（預設 ${ClaudeClient.DEFAULT_MODEL}）") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-        }
-
-        Button(
-            enabled = !s.running && s.selected.isNotEmpty(),
-            onClick = {
-                watch = store.load()
-                val stocks = watch.filter { it.symbol in s.selected }
-                message = ""
-                s.run(
-                    stocks,
-                    TeamSettings(Horizon.values()[s.horizonIdx], RiskProfile.values()[s.riskIdx], s.rfText.num() ?: 1.5),
-                    apiKey.trim(),
-                    model.trim().ifBlank { ClaudeClient.DEFAULT_MODEL }
-                )
-            },
-            modifier = Modifier.fillMaxWidth()
-        ) { Text(if (s.running) "分析中…" else "開始分析（${s.selected.size} 檔）") }
         if (s.status.isNotBlank()) Text(s.status, style = MaterialTheme.typography.bodyMedium)
         if (s.running) LinearProgressIndicator(Modifier.fillMaxWidth())
         s.errors.forEach { Text("⚠ $it", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
 
-        // ---- 結果 ----
         if (s.results.isNotEmpty()) {
-            @Suppress("UNUSED_VARIABLE") val tick = s.aiTick // 讓 AI 文字更新時重新組合
-            RankingTable(analyses)
+            val analyses = s.results.map { it.analysis }
+            Collapsible("排名比較", subtitle = "${analyses.size} 檔，依綜合分數由高到低", key = "team:ranking") { RankingTable(analyses) }
             s.overallAi?.let { text ->
-                Card(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("🧠 組長總結（Claude 解讀）", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                        AiText(text)
-                    }
-                }
+                Collapsible("🧠 組長總結（Claude 解讀）", key = "team:overall") { AiText(text) }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { mdLauncher.launch("AI金融分析報告_$dateText.md") }) { Text("下載 Markdown") }
-                OutlinedButton(onClick = { htmlLauncher.launch("AI金融分析報告_$dateText.html") }) { Text("下載 HTML") }
-            }
-            if (message.isNotBlank()) Text(message, style = MaterialTheme.typography.bodySmall)
             s.results.forEachIndexed { i, b -> StockResultCard(i + 1, b, s.aiTick) }
             Text(ReportBuilder.DISCLAIMER, style = MaterialTheme.typography.bodySmall)
+        } else if (!s.running) {
+            Text("尚無分析結果：選好股票後，按下方的「分析」。", style = MaterialTheme.typography.bodySmall)
         }
     }
 }
@@ -360,25 +485,22 @@ fun TeamTab() {
 @Composable
 private fun RankingTable(list: List<StockAnalysis>) {
     val rows = ReportBuilder.ranked(list)
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("排名比較", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Row(Modifier.fillMaxWidth()) {
-                Cell("#", 0.5f, true); Cell("標的", 2.2f, true); Cell("評級", 1.3f, true); Cell("綜合", 1f, true)
-                Cell("技", 0.8f, true); Cell("財", 0.8f, true); Cell("市", 0.8f, true); Cell("險", 0.8f, true); Cell("部位", 1f, true)
-            }
-            rows.forEachIndexed { i, a ->
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Cell("${i + 1}", 0.5f)
-                    Cell(a.displayName, 2.2f)
-                    Cell(a.lead.rating.label, 1.3f, color = ratingColor(a.lead.rating))
-                    Cell(f2(a.lead.score), 1f)
-                    Cell(sc(a.tech), 0.8f); Cell(sc(a.fund), 0.8f); Cell(sc(a.market), 0.8f); Cell(sc(a.risk), 0.8f)
-                    Cell("${f2(a.lead.positionCapPct)}%", 1f)
-                }
-            }
-            Text("技＝技術、財＝財報、市＝市場趨勢、險＝風險（分數越高越好；風險分數越高代表風險越低）；部位＝部位上限。", style = MaterialTheme.typography.labelSmall)
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(Modifier.fillMaxWidth()) {
+            Cell("#", 0.5f, true); Cell("標的", 2.2f, true); Cell("評級", 1.3f, true); Cell("綜合", 1f, true)
+            Cell("技", 0.8f, true); Cell("財", 0.8f, true); Cell("市", 0.8f, true); Cell("險", 0.8f, true); Cell("部位", 1f, true)
         }
+        rows.forEachIndexed { i, a ->
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Cell("${i + 1}", 0.5f)
+                Cell(a.displayName, 2.2f)
+                Cell(a.lead.rating.label, 1.3f, color = ratingColor(a.lead.rating))
+                Cell(f2(a.lead.score), 1f)
+                Cell(sc(a.tech), 0.8f); Cell(sc(a.fund), 0.8f); Cell(sc(a.market), 0.8f); Cell(sc(a.risk), 0.8f)
+                Cell("${f2(a.lead.positionCapPct)}%", 1f)
+            }
+        }
+        Text("技＝技術、財＝財報、市＝市場趨勢、險＝風險（分數越高越好；風險分數越高代表風險越低）；部位＝部位上限。", style = MaterialTheme.typography.labelSmall)
     }
 }
 
@@ -396,47 +518,36 @@ private fun androidx.compose.foundation.layout.RowScope.Cell(text: String, weigh
     )
 }
 
-// ---------------------------------------------------------------------------------------------- 單檔結果
+// ---------------------------------------------------------------------------------------------- 單檔結果（每一層都可收合）
 
 @Composable
 private fun StockResultCard(rank: Int, b: StockBundle, aiTick: Int) {
     val a = b.analysis
-    var expanded by remember(a.symbol) { mutableStateOf(rank == 1) }
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(Modifier.fillMaxWidth().clickable { expanded = !expanded }, verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("$rank. ${a.displayName}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Text("${a.symbol}　收盤 ${f2(a.price)}（${DateUtil.format(a.lastDay)}）", style = MaterialTheme.typography.bodySmall)
-                }
-                Column(horizontalAlignment = Alignment.End) {
-                    Text(a.lead.rating.label, color = ratingColor(a.lead.rating), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Text("${f2(a.lead.score)} 分", style = MaterialTheme.typography.bodySmall)
-                }
-                Text(if (expanded) "▲" else "▼", modifier = Modifier.padding(start = 8.dp))
-            }
-            if (expanded) {
-                LeadCard(a)
-                a.agents().forEach { AgentCard(it) }
-                @Suppress("UNUSED_VARIABLE") val tick = aiTick
-                if (!a.aiText.isNullOrBlank()) {
-                    Text("Claude 白話解讀", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                    AiText(a.aiText!!)
-                } else if (!a.aiError.isNullOrBlank()) {
-                    Text("AI 解讀失敗：${a.aiError}", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
-                }
-                Text("圖表", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                StockCharts(b)
-            }
-        }
+    @Suppress("UNUSED_VARIABLE") val tick = aiTick // AI 文字更新時重新組合
+    Collapsible(
+        title = "$rank. ${a.displayName}（${a.symbol}）",
+        subtitle = "${a.lead.rating.label}　${f2(a.lead.score)} 分　部位上限 ${f2(a.lead.positionCapPct)}%　收盤 ${f2(a.price)}",
+        subtitleColor = ratingColor(a.lead.rating),
+        key = "team:stock:${a.symbol}"
+    ) {
+        Text("收盤 ${f2(a.price)}（${DateUtil.format(a.lastDay)}）", style = MaterialTheme.typography.bodySmall)
+        LeadSection(a)
+        a.agents().forEach { AgentSection(a.symbol, it) }
+        AiSection(a)
+        ChartsSection(a.symbol, b.charts)
     }
 }
 
 @Composable
-private fun LeadCard(a: StockAnalysis) {
+private fun LeadSection(a: StockAnalysis) {
     val l = a.lead
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text("🧠 投資組長", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+    Collapsible(
+        "🧠 投資組長",
+        level = 1,
+        subtitle = "${l.rating.label}・部位上限 ${f2(l.positionCapPct)}%・支撐 ${f2(l.support)}／壓力 ${f2(l.resistance)}／停損 ${f2(l.stopLoss)}",
+        subtitleColor = ratingColor(l.rating),
+        key = "team:lead:${a.symbol}"
+    ) {
         Text(
             "評級：${l.rating.label}（綜合 ${f2(l.score)}/100）\n部位上限：${f2(l.positionCapPct)}%（占整體投資組合）\n" +
                 "支撐 ${f2(l.support)}　壓力 ${f2(l.resistance)}　停損 ${f2(l.stopLoss)}" +
@@ -448,12 +559,13 @@ private fun LeadCard(a: StockAnalysis) {
 }
 
 @Composable
-private fun AgentCard(r: AgentReport) {
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("${r.role.emoji} ${r.role.label}", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-            Text(if (r.score != null) "${f2(r.score)}/100　${r.verdict}" else r.verdict, style = MaterialTheme.typography.bodySmall)
-        }
+private fun AgentSection(symbol: String, r: AgentReport) {
+    Collapsible(
+        "${r.role.emoji} ${r.role.label}",
+        level = 1,
+        subtitle = if (r.score != null) "${f2(r.score)}/100　${r.verdict}" else r.verdict,
+        key = "team:agent:$symbol:${r.role.name}"
+    ) {
         if (r.score != null) LinearProgressIndicator(progress = { (r.score / 100.0).toFloat().coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth())
         r.findings.forEach { Text("• $it", style = MaterialTheme.typography.bodySmall) }
         if (r.metrics.isNotEmpty()) {
@@ -465,6 +577,15 @@ private fun AgentCard(r: AgentReport) {
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun AiSection(a: StockAnalysis) {
+    if (!a.aiText.isNullOrBlank()) {
+        Collapsible("Claude 白話解讀", level = 1, key = "team:ai:${a.symbol}") { AiText(a.aiText!!) }
+    } else if (!a.aiError.isNullOrBlank()) {
+        Text("AI 解讀失敗：${a.aiError}", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
     }
 }
 
@@ -484,76 +605,77 @@ private fun AiText(md: String) {
     }
 }
 
-// ---------------------------------------------------------------------------------------------- 圖表
+// ---------------------------------------------------------------------------------------------- 圖表（每張可收合）
 
 @Composable
-private fun StockCharts(b: StockBundle) {
-    val c = b.charts
+private fun ChartsSection(symbol: String, c: com.example.invcalc.team.ChartData) {
     val n = c.labels.size
     // K 線、MACD、RSI、相對大盤、回撤共用同一個檢視狀態：日期對齊、同步縮放平移
     val view = rememberChartViewState(n, 120)
 
-    Text("K 線與均線、布林通道", style = MaterialTheme.typography.labelLarge)
-    ZoomableLineChart(
-        labels = c.labels,
-        series = listOf(
-            ChartSeries("MA20", cOrange, c.ma20, 1.2f),
-            ChartSeries("MA60", cPurple, c.ma60, 1.2f)
-        ),
-        band = c.bbUp to c.bbLow,
-        bandName = "布林通道",
-        bandColor = cGray,
-        chartHeight = 280.dp,
-        state = view,
-        showHint = false,
-        candles = c.candles
-    )
-    Text("MACD", style = MaterialTheme.typography.labelLarge)
-    ZoomableLineChart(
-        labels = c.labels,
-        series = listOf(
-            ChartSeries("柱狀體", cUp, c.hist, bars = true, negColor = cDown),
-            ChartSeries("DIF", cBlue, c.macd, 1.2f),
-            ChartSeries("訊號線", cOrange, c.signal, 1.2f)
-        ),
-        chartHeight = 150.dp,
-        state = view,
-        showHint = false
-    )
-    Text("RSI(14)（70 以上超買、30 以下超賣）", style = MaterialTheme.typography.labelLarge)
-    ZoomableLineChart(
-        labels = c.labels,
-        series = listOf(
-            ChartSeries("RSI", cPurple, c.rsi),
-            ChartSeries("70", cUp, List(n) { 70.0 }, 1f),
-            ChartSeries("30", cDown, List(n) { 30.0 }, 1f)
-        ),
-        chartHeight = 130.dp,
-        state = view,
-        showHint = false
-    )
-    Text("相對大盤（期初 = 100）", style = MaterialTheme.typography.labelLarge)
-    val rel = buildList {
-        add(ChartSeries("本股", cBlue, c.stockRel))
-        c.indexRel?.let { add(ChartSeries(c.indexName, cGray, it)) }
-    }
-    ZoomableLineChart(labels = c.labels, series = rel, chartHeight = 180.dp, state = view, showHint = false)
-    Text("回撤（%，相對歷史高點）", style = MaterialTheme.typography.labelLarge)
-    ZoomableLineChart(
-        labels = c.labels,
-        series = listOf(ChartSeries("回撤 %", cDown, c.drawdown)),
-        chartHeight = 150.dp,
-        state = view
-    )
-    Text("年度營收（億）", style = MaterialTheme.typography.labelLarge)
-    if (c.revLabels.size >= 2) {
+    Collapsible("📊 K 線與均線、布林通道", level = 1, key = "team:chart:k:$symbol") {
         ZoomableLineChart(
-            labels = c.revLabels,
-            series = listOf(ChartSeries("營收（億）", cBlue, c.revValues, bars = true)),
-            chartHeight = 170.dp,
-            initialVisible = c.revLabels.size
+            labels = c.labels,
+            series = listOf(ChartSeries("MA20", cOrange, c.ma20, 1.2f), ChartSeries("MA60", cPurple, c.ma60, 1.2f)),
+            band = c.bbUp to c.bbLow,
+            bandName = "布林通道",
+            bandColor = cGray,
+            chartHeight = 280.dp,
+            state = view,
+            candles = c.candles
         )
-    } else {
-        Text("Yahoo 未提供足夠的年度營收資料（ETF 或資料缺漏時常見），無法繪製。", style = MaterialTheme.typography.bodySmall)
+    }
+    Collapsible("📊 MACD", level = 1, key = "team:chart:macd:$symbol") {
+        ZoomableLineChart(
+            labels = c.labels,
+            series = listOf(
+                ChartSeries("柱狀體", cUp, c.hist, bars = true, negColor = cDown),
+                ChartSeries("DIF", cBlue, c.macd, 1.2f),
+                ChartSeries("訊號線", cOrange, c.signal, 1.2f)
+            ),
+            chartHeight = 150.dp,
+            state = view,
+            showHint = false
+        )
+    }
+    Collapsible("📊 RSI(14)", subtitle = "70 以上超買、30 以下超賣", level = 1, key = "team:chart:rsi:$symbol") {
+        ZoomableLineChart(
+            labels = c.labels,
+            series = listOf(
+                ChartSeries("RSI", cPurple, c.rsi),
+                ChartSeries("70", cUp, List(n) { 70.0 }, 1f),
+                ChartSeries("30", cDown, List(n) { 30.0 }, 1f)
+            ),
+            chartHeight = 130.dp,
+            state = view,
+            showHint = false
+        )
+    }
+    Collapsible("📊 相對大盤", subtitle = "期初 = 100", level = 1, key = "team:chart:rel:$symbol") {
+        val rel = buildList {
+            add(ChartSeries("本股", cBlue, c.stockRel))
+            c.indexRel?.let { add(ChartSeries(c.indexName, cGray, it)) }
+        }
+        ZoomableLineChart(labels = c.labels, series = rel, chartHeight = 180.dp, state = view, showHint = false)
+    }
+    Collapsible("📊 回撤", subtitle = "相對歷史高點的跌幅 %", level = 1, key = "team:chart:dd:$symbol") {
+        ZoomableLineChart(
+            labels = c.labels,
+            series = listOf(ChartSeries("回撤 %", cDown, c.drawdown)),
+            chartHeight = 150.dp,
+            state = view
+        )
+    }
+    Collapsible("📊 年度營收", subtitle = "單位：億", level = 1, key = "team:chart:rev:$symbol") {
+        if (c.revLabels.size >= 2) {
+            ZoomableLineChart(
+                labels = c.revLabels,
+                series = listOf(ChartSeries("營收（億）", cBlue, c.revValues, bars = true)),
+                chartHeight = 170.dp,
+                initialVisible = c.revLabels.size
+            )
+        } else {
+            Text("Yahoo 未提供足夠的年度營收資料（ETF 或資料缺漏時常見），無法繪製。", style = MaterialTheme.typography.bodySmall)
+        }
     }
 }

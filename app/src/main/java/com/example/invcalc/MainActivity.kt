@@ -40,6 +40,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.example.invcalc.stock.ui.StockTab
+import com.example.invcalc.team.ui.TeamPrefs
 import com.example.invcalc.team.ui.TeamTab
 import java.util.Locale
 import kotlinx.coroutines.launch
@@ -48,8 +49,9 @@ import kotlin.math.roundToLong
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        AppTheme.index = TeamPrefs(this).theme.coerceIn(0, AppTheme.options.lastIndex)
         setContent {
-            MaterialTheme {
+            MaterialTheme(colorScheme = AppTheme.scheme()) {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     App()
                 }
