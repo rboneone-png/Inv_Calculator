@@ -26,6 +26,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
@@ -39,6 +40,7 @@ import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import java.util.Locale
+import com.example.invcalc.team.Candle
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.floor
@@ -67,7 +69,9 @@ class ChartSeries(
     val color: Color,
     val values: List<Double>, // 可含 NaN（該點不繪製）
     val strokeDp: Float = 1.6f,
-    val dots: Boolean = false // true 時以圓點繪製（散佈圖）
+    val dots: Boolean = false, // true 時以圓點繪製（散佈圖）
+    val bars: Boolean = false, // true 時以柱狀繪製（從 0 軸起算，如 MACD 柱狀體、營收）
+    val negColor: Color? = null // 柱狀圖負值的顏色
 )
 
 /**
@@ -85,12 +89,13 @@ fun ZoomableLineChart(
     chartHeight: Dp = 260.dp,
     initialVisible: Int = 150,
     state: ChartViewState? = null,
-    showHint: Boolean = true
+    showHint: Boolean = true,
+    candles: List<Candle>? = null // K 線（與 labels 等長）；紅漲綠跌
 ) {
     if (labels.size < 2) {
         Text("資料不足，無法繪圖", style = MaterialTheme.typography.bodyMedium, modifier = modifier)
     } else {
-        ChartBody(labels, series, modifier, band, bandName, bandColor, chartHeight, initialVisible, state, showHint)
+        ChartBody(labels, series, modifier, band, bandName, bandColor, chartHeight, initialVisible, state, showHint, candles)
     }
 }
 
@@ -105,7 +110,8 @@ private fun ChartBody(
     chartHeight: Dp,
     initialVisible: Int,
     state: ChartViewState?,
-    showHint: Boolean
+    showHint: Boolean,
+    candles: List<Candle>?
 ) {
     val n = labels.size
     val own = remember(n, initialVisible) { ChartViewState(n, initialVisible) }
@@ -171,6 +177,17 @@ private fun ChartBody(
             }
             series.forEach { scan(it.values) }
             band?.let { scan(it.first); scan(it.second) }
+            candles?.let { cs ->
+                for (ci in i0..i1) {
+                    val cd = cs[ci]
+                    if (cd.high.isFinite() && cd.high > hi) hi = cd.high
+                    if (cd.low.isFinite() && cd.low < lo) lo = cd.low
+                }
+            }
+            if (series.any { it.bars } && lo.isFinite() && hi.isFinite()) {
+                if (lo > 0.0) lo = 0.0
+                if (hi < 0.0) hi = 0.0
+            }
             if (!lo.isFinite() || !hi.isFinite()) return@Canvas
             if (hi - lo < 1e-9) { lo -= 1.0; hi += 1.0 }
             val padV = (hi - lo) * 0.06
@@ -208,6 +225,24 @@ private fun ChartBody(
 
             val step = max(1, (i1 - i0 + 1) / max(plotW.toInt(), 1))
             clipRect(leftPad, topPad, leftPad + plotW, topPad + plotH) {
+                // K 線：紅漲綠跌
+                candles?.let { cs ->
+                    val cw = (plotW / max(c, 1f) * 0.7f).coerceIn(1.dp.toPx(), 12.dp.toPx())
+                    var ci = i0
+                    while (true) {
+                        val cd = cs[ci]
+                        if (cd.high.isFinite() && cd.low.isFinite()) {
+                            val col = if (cd.close >= cd.open) candleUp else candleDown
+                            val x = xOf(ci)
+                            drawLine(col, Offset(x, yOf(cd.high)), Offset(x, yOf(cd.low)), strokeWidth = 1.dp.toPx())
+                            val yo = yOf(cd.open)
+                            val yc = yOf(cd.close)
+                            drawRect(col, Offset(x - cw / 2, min(yo, yc)), Size(cw, max(abs(yo - yc), 1f)))
+                        }
+                        if (ci >= i1) break
+                        ci = min(ci + step, i1)
+                    }
+                }
                 // 區間帶
                 band?.let { (up, low) ->
                     val idxs = ArrayList<Int>()
@@ -229,6 +264,22 @@ private fun ChartBody(
                 }
                 // 折線／圓點
                 series.forEach { sr ->
+                    if (sr.bars) {
+                        val bw = (plotW / max(c, 1f) * 0.6f).coerceIn(1f, 14.dp.toPx())
+                        val y0 = yOf(0.0)
+                        var bi = i0
+                        while (true) {
+                            val v = sr.values[bi]
+                            if (v.isFinite()) {
+                                val y = yOf(v)
+                                val col = if (v >= 0) sr.color else (sr.negColor ?: sr.color)
+                                drawRect(col, Offset(xOf(bi) - bw / 2, min(y, y0)), Size(bw, max(abs(y - y0), 1f)))
+                            }
+                            if (bi >= i1) break
+                            bi = min(bi + step, i1)
+                        }
+                        return@forEach
+                    }
                     if (sr.dots) {
                         val r = 1.8.dp.toPx()
                         var di = i0
@@ -281,13 +332,16 @@ private fun ChartBody(
         }
         if (showHint) {
             Text(
-                "雙指縮放、放大後左右拖曳、雙擊還原",
+                if (candles != null) "紅漲綠跌；雙指縮放、放大後左右拖曳、雙擊還原" else "雙指縮放、放大後左右拖曳、雙擊還原",
                 style = MaterialTheme.typography.labelSmall,
                 color = textColor
             )
         }
     }
 }
+
+private val candleUp = Color(0xFFE53935)
+private val candleDown = Color(0xFF2E7D32)
 
 private fun fmtAxis(v: Double): String = when {
     abs(v) >= 1000 -> String.format(Locale.US, "%.0f", v)

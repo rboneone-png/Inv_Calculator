@@ -40,6 +40,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.example.invcalc.stock.ui.StockTab
+import com.example.invcalc.team.ui.TeamTab
 import java.util.Locale
 import kotlinx.coroutines.launch
 import kotlin.math.roundToLong
@@ -57,7 +58,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private val tabs = listOf("複利", "定期定額", "報酬率", "貸款", "蛛網", "股票分析")
+private val tabs = listOf("複利", "定期定額", "報酬率", "貸款", "蛛網", "股票分析", "AI 分析團隊")
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -87,7 +88,8 @@ fun App() {
                 2 -> ReturnScreen()
                 3 -> LoanScreen()
                 4 -> GridScreen()
-                else -> StockTab()
+                5 -> StockTab()
+                else -> TeamTab()
             }
         }
     }

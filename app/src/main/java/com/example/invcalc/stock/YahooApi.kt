@@ -56,6 +56,9 @@ object YahooApi {
         val quote = ind.getJSONArray("quote").getJSONObject(0)
         val close = quote.getJSONArray("close")
         val vol = quote.optJSONArray("volume")
+        val opens = quote.optJSONArray("open")
+        val highs = quote.optJSONArray("high")
+        val lows = quote.optJSONArray("low")
         val adj = ind.optJSONArray("adjclose")?.optJSONObject(0)?.optJSONArray("adjclose")
 
         val bars = ArrayList<Bar>()
@@ -65,7 +68,9 @@ object YahooApi {
             val a = if (adj != null && i < adj.length() && !adj.isNull(i)) adj.getDouble(i) else c
             val v = if (vol != null && i < vol.length() && !vol.isNull(i)) vol.getDouble(i) else 0.0
             val day = Math.floorDiv(ts.getLong(i) + offset, 86400L)
-            val bar = Bar(day, c, a, v)
+            fun pick(arr: org.json.JSONArray?): Double =
+                if (arr != null && i < arr.length() && !arr.isNull(i)) arr.getDouble(i) else c
+            val bar = Bar(day, c, a, v, pick(opens), pick(highs), pick(lows))
             if (bars.isNotEmpty() && bars.last().epochDay == day) bars[bars.size - 1] = bar else bars.add(bar)
         }
         if (bars.size < 2) throw IllegalArgumentException("價格資料不足")
