@@ -387,4 +387,63 @@ class TeamLogicTest {
         // 系統提示明確要求 AI 不得改動數字
         assertTrue(ClaudeClient.SYSTEM_STOCK.contains("不得重新計算"))
     }
+
+    // ---------------------------------------------------------------- PDF 文字
+
+    @Test
+    fun pdfTextFromMarkdown() {
+        val md = """
+            # AI 金融分析團隊投資報告
+            - 產生日期：2026-11-27
+            ## 排名比較
+            | 排名 | 標的 | 評級 |
+            |---|---|---|
+            | 1 | 台積電（2330.TW） | 買進 |
+            ### 📈 技術分析師　78.0/100（偏多）
+            - 發現：收盤價在 **20 日均線**之上
+            ---
+            免責聲明
+        """.trimIndent()
+        val lines = PdfText.fromMarkdown(md)
+        assertEquals(PdfStyle.H1, lines[0].style)
+        assertEquals("AI 金融分析團隊投資報告", lines[0].text)
+        assertEquals("• 產生日期：2026-11-27", lines[1].text)
+        assertEquals(PdfStyle.BULLET, lines[1].style)
+        assertEquals(PdfStyle.H2, lines[2].style)
+        assertEquals("排名  ｜  標的  ｜  評級", lines[3].text) // 表頭列保留
+        assertEquals("1  ｜  台積電（2330.TW）  ｜  買進", lines[4].text) // 分隔列 |---| 被略過
+        assertEquals("技術分析師　78.0/100（偏多）", lines[5].text) // 表情符號被移除
+        assertEquals("• 發現：收盤價在 20 日均線之上", lines[6].text) // 粗體標記被移除
+        assertEquals("免責聲明", lines[7].text)
+        assertEquals(8, lines.size)
+    }
+
+    @Test
+    fun stripEmojiKeepsChinese() {
+        assertEquals("風險分析師", PdfText.stripEmoji("🛡️風險分析師"))
+        assertEquals("投資組長 (1)", PdfText.stripEmoji("🧠投資組長 (1)"))
+        assertEquals("台積電", PdfText.stripEmoji("台積電"))
+    }
+
+    @Test
+    fun fullReportConvertsToPdfLines() {
+        val a = bundle("AAA", "強勢股", trendBars(300, 100.0, 0.002), null).analysis
+        val md = ReportBuilder.markdown(listOf(a), settings, null, "2026-11-27")
+        val lines = PdfText.fromMarkdown(md)
+        assertTrue(lines.isNotEmpty())
+        assertTrue(lines.none { it.text.contains("**") || it.text.contains("|---") })
+        assertTrue(lines.any { it.style == PdfStyle.H1 && it.text.startsWith("AI 金融分析團隊") })
+        assertTrue(lines.any { it.text.contains("強勢股") })
+        assertTrue(lines.last().text.contains("不構成投資建議"))
+    }
+
+    @Test
+    fun recipientsParsing() {
+        assertEquals(listOf("a@b.com", "c@d.org"), Recipients.parse("a@b.com, c@d.org"))
+        assertEquals(listOf("a@b.com", "c@d.org"), Recipients.parse("a@b.com；c@d.org\na@b.com")) // 去除重複
+        assertTrue(Recipients.parse("沒有信箱, abc, @x, y@").isEmpty())
+        assertTrue(Recipients.parse("").isEmpty())
+        assertEquals("報告 2026-11-27", Recipients.subject("報告 {日期}", "2026-11-27", "預設"))
+        assertEquals("預設 2026-11-27", Recipients.subject("", "2026-11-27", "預設 {日期}"))
+    }
 }

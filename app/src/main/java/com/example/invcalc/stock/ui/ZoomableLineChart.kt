@@ -140,7 +140,8 @@ private fun ChartBody(
                             val w = size.width.toFloat().coerceAtLeast(1f)
                             if (multi || (zoomed && abs(pan.x) > abs(pan.y))) {
                                 if (multi && zoom != 1f) {
-                                    val newCount = (vs.count / zoom).coerceIn(min(10, n).toFloat(), n.toFloat())
+                                    val minCount = min(10, max(2, n / 2)).toFloat() // 資料點少（如年度營收）也能放大到 2 點
+                                    val newCount = (vs.count / zoom).coerceIn(minCount, n.toFloat())
                                     val cx = (event.calculateCentroid().x / w).coerceIn(0f, 1f)
                                     vs.start += (vs.count - newCount) * cx
                                     vs.count = newCount
@@ -194,7 +195,8 @@ private fun ChartBody(
             lo -= padV
             hi += padV
 
-            fun xOf(i: Int) = leftPad + (i - s) / max(c - 1f, 1f) * plotW
+            // 每個資料點置中於自己的格子，柱狀圖與 K 線在兩端不會被裁切；所有圖表共用同一公式，同步縮放時日期仍對齊
+            fun xOf(i: Int) = leftPad + (i - s + 0.5f) / max(c, 1f) * plotW
             fun yOf(v: Double) = (topPad + (hi - v) / (hi - lo) * plotH).toFloat()
 
             paint.textSize = 10.dp.toPx()
@@ -212,7 +214,7 @@ private fun ChartBody(
             // X 軸標籤與垂直格線
             paint.textAlign = android.graphics.Paint.Align.CENTER
             for (k in 0..3) {
-                val idx = (s + (c - 1f) * k / 3).roundToInt().coerceIn(0, n - 1)
+                val idx = (s + c * k / 3 - 0.5f).roundToInt().coerceIn(0, n - 1)
                 val gx = leftPad + plotW * k / 3
                 drawLine(gridColor, Offset(gx, topPad), Offset(gx, topPad + plotH), strokeWidth = 1f)
                 val x = gx.coerceIn(leftPad + 24.dp.toPx(), leftPad + plotW - 24.dp.toPx())
