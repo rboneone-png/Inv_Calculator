@@ -2,6 +2,7 @@ package com.example.invcalc.team.ui
 
 import android.content.Context
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LinearProgressIndicator
@@ -29,6 +31,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -273,12 +276,15 @@ fun TeamTab() {
     val store = remember { StockStore(context) }
     val scope = rememberCoroutineScope()
     var page by rememberSaveable { mutableIntStateOf(0) } // 0 = 分析、1 = 設定
+    var detail by rememberSaveable { mutableStateOf<String?>(null) } // 開啟中的股票（另一層畫面）；null = 排名清單
+    val holder = rememberSaveableStateHolder()
     var showDownload by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf("") }
     val s = TeamSession
 
     fun startAnalysis() {
         page = 0
+        detail = null // 重新分析會清掉舊結果，回到清單
         val stocks = store.load().filter { it.symbol in s.selected }
         if (stocks.isEmpty()) {
             message = "請先在「選擇股票」勾選至少一檔股票，再按「分析」"
@@ -333,8 +339,28 @@ fun TeamTab() {
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)
             )
         }
+        // 清單、單檔詳細、設定三層畫面各自保存捲動位置與展開狀態，來回切換不會遺失
+        val opened = detail?.let { sym -> s.results.firstOrNull { it.analysis.symbol == sym } }
+        BackHandler(enabled = page == 1) { page = 0 }
+        BackHandler(enabled = page == 0 && opened != null) { detail = null }
         Box(Modifier.weight(1f)) {
-            if (page == 0) AnalysisPage(store) else SettingsPage(prefs, onBack = { page = 0 })
+            val screenKey = when {
+                page == 1 -> "settings"
+                opened != null -> "detail:${opened.analysis.symbol}"
+                else -> "list"
+            }
+            holder.SaveableStateProvider(screenKey) {
+                when {
+                    page == 1 -> SettingsPage(prefs, onBack = { page = 0 })
+                    opened != null -> StockDetailScreen(
+                        rank = s.results.indexOf(opened) + 1,
+                        b = opened,
+                        aiTick = s.aiTick,
+                        onBack = { detail = null }
+                    )
+                    else -> AnalysisPage(store, onOpen = { detail = it })
+                }
+            }
         }
         // 固定在最下方：下載／分析／設定
         NavigationBar {
@@ -392,7 +418,7 @@ fun TeamTab() {
 // ---------------------------------------------------------------------------------------------- 分析頁
 
 @Composable
-private fun AnalysisPage(store: StockStore) {
+private fun AnalysisPage(store: StockStore, onOpen: (String) -> Unit) {
     val s = TeamSession
     var watch by remember { mutableStateOf(store.load()) }
 
@@ -472,7 +498,8 @@ private fun AnalysisPage(store: StockStore) {
             s.overallAi?.let { text ->
                 Collapsible("🧠 組長總結（Claude 解讀）", key = "team:overall") { AiText(text) }
             }
-            s.results.forEachIndexed { i, b -> StockResultCard(i + 1, b, s.aiTick) }
+            Text("點選股票，開啟該檔的詳細分析：", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            s.results.forEachIndexed { i, b -> StockRow(i + 1, b) { onOpen(b.analysis.symbol) } }
             Text(ReportBuilder.DISCLAIMER, style = MaterialTheme.typography.bodySmall)
         } else if (!s.running) {
             Text("尚無分析結果：選好股票後，按下方的「分析」。", style = MaterialTheme.typography.bodySmall)
@@ -521,20 +548,42 @@ private fun androidx.compose.foundation.layout.RowScope.Cell(text: String, weigh
 // ---------------------------------------------------------------------------------------------- 單檔結果（每一層都可收合）
 
 @Composable
-private fun StockResultCard(rank: Int, b: StockBundle, aiTick: Int) {
+private fun StockRow(rank: Int, b: StockBundle, onClick: () -> Unit) {
+    val a = b.analysis
+    Card(Modifier.fillMaxWidth().clickable(onClick = onClick)) {
+        Row(Modifier.padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("$rank. ${a.displayName}（${a.symbol}）", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text(
+                    "${a.lead.rating.label}　${f2(a.lead.score)} 分　部位上限 ${f2(a.lead.positionCapPct)}%　收盤 ${f2(a.price)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = ratingColor(a.lead.rating)
+                )
+            }
+            Text("›", style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.primary)
+        }
+    }
+}
+
+/** 單檔的詳細分析（另一層畫面）。內部各區塊仍可展開／收合，預設收合。 */
+@Composable
+private fun StockDetailScreen(rank: Int, b: StockBundle, aiTick: Int, onBack: () -> Unit) {
     val a = b.analysis
     @Suppress("UNUSED_VARIABLE") val tick = aiTick // AI 文字更新時重新組合
-    Collapsible(
-        title = "$rank. ${a.displayName}（${a.symbol}）",
-        subtitle = "${a.lead.rating.label}　${f2(a.lead.score)} 分　部位上限 ${f2(a.lead.positionCapPct)}%　收盤 ${f2(a.price)}",
-        subtitleColor = ratingColor(a.lead.rating),
-        key = "team:stock:${a.symbol}"
-    ) {
-        Text("收盤 ${f2(a.price)}（${DateUtil.format(a.lastDay)}）", style = MaterialTheme.typography.bodySmall)
+    ScreenColumn {
+        TextButton(onClick = onBack) { Text("← 返回排名") }
+        Text("${a.displayName}（${a.symbol}）", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        Text("第 $rank 名　收盤 ${f2(a.price)}（${DateUtil.format(a.lastDay)}）", style = MaterialTheme.typography.bodySmall)
+        Text(
+            "${a.lead.rating.label}　綜合 ${f2(a.lead.score)}/100　部位上限 ${f2(a.lead.positionCapPct)}%",
+            style = MaterialTheme.typography.titleMedium,
+            color = ratingColor(a.lead.rating)
+        )
         LeadSection(a)
         a.agents().forEach { AgentSection(a.symbol, it) }
         AiSection(a)
         ChartsSection(a.symbol, b.charts)
+        Text(ReportBuilder.DISCLAIMER, style = MaterialTheme.typography.bodySmall)
     }
 }
 
