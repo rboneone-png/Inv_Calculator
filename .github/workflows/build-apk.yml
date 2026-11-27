@@ -23,17 +23,24 @@ jobs:
         run: gradle testDebugUnitTest
       - name: Build debug APK
         run: gradle assembleDebug
-      - name: Rename APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk InvCalculator.apk
+      # APK 檔名含版本：InvCalculator-v<versionName>-build<編號>.apk
+      - name: Name APK with version
+        id: ver
+        run: |
+          VN=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
+          FILE="InvCalculator-v${VN}-build${{ github.run_number }}.apk"
+          cp app/build/outputs/apk/debug/app-debug.apk "$FILE"
+          echo "name=$VN" >> "$GITHUB_OUTPUT"
+          echo "file=$FILE" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
         with:
           name: InvCalculator-debug-apk
-          path: InvCalculator.apk
+          path: ${{ steps.ver.outputs.file }}
       # 只有 main 分支才發佈到 GitHub Releases，方便直接下載 APK
       - name: Publish release
         if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.${{ github.run_number }}
-          name: 投資計算機 v1.0.${{ github.run_number }}
-          files: InvCalculator.apk
+          tag_name: v${{ steps.ver.outputs.name }}-build${{ github.run_number }}
+          name: 投資計算機 v${{ steps.ver.outputs.name }}（build ${{ github.run_number }}）
+          files: ${{ steps.ver.outputs.file }}
