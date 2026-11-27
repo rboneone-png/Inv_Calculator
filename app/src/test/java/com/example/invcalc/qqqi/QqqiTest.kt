@@ -118,4 +118,50 @@ class QqqiTest {
         assertEquals("31.7425", QqqiCalc.plain(31.74250000001, 4))
         assertEquals("10000000", QqqiCalc.plain(1.0E7, 2))
     }
+
+    @Test
+    fun loanPaymentMatchesStandardAmortization() {
+        // 預期值以獨立的高精度計算驗證
+        assertEquals(5299L, QqqiCalc.loanPayment(1_000_000.0, 2.5, 240))   // 5299.0289…
+        assertEquals(8885L, QqqiCalc.loanPayment(100_000.0, 12.0, 12))     // 8884.8788… → 四捨五入
+        assertEquals(4216L, QqqiCalc.loanPayment(1_000_000.0, 3.0, 360))   // 4216.0403…
+        assertEquals(5147L, QqqiCalc.loanPayment(1_000_000.0, 2.185, 240)) // 5146.9144…
+        assertEquals(11391L, QqqiCalc.loanPayment(3_000_000.0, 2.2, 360))  // 11391.0252…
+    }
+
+    @Test
+    fun loanPaymentZeroRateAndEdgeCases() {
+        assertEquals(10000L, QqqiCalc.loanPayment(120_000.0, 0.0, 12))     // 零利率：本金 ÷ 期數
+        assertEquals(0L, QqqiCalc.loanPayment(0.0, 2.5, 240))              // 貸款 0 → 每月 0
+        // 1 期：一次還清本金加 1 個月利息 = 1,000,000 × (1 + 2.5%/12) = 1,002,083.33 → 1,002,083
+        assertEquals(1_002_083L, QqqiCalc.loanPayment(1_000_000.0, 2.5, 1))
+        assertNull(QqqiCalc.loanPayment(-1.0, 2.5, 240))
+        assertNull(QqqiCalc.loanPayment(1_000_000.0, -0.1, 240))
+        assertNull(QqqiCalc.loanPayment(1_000_000.0, 2.5, 0))
+        assertNull(QqqiCalc.loanPayment(Double.NaN, 2.5, 240))
+    }
+
+    @Test
+    fun loanPaymentRoundsHalfUp() {
+        // 零利率下 100 ÷ 8 = 12.5 → 四捨五入為 13（銀行家捨入會是 12）
+        assertEquals(13L, QqqiCalc.loanPayment(100.0, 0.0, 8))
+        assertEquals(12L, QqqiCalc.loanPayment(99.0, 0.0, 8)) // 12.375 → 12
+    }
+
+    @Test
+    fun monthlyBalance() {
+        assertEquals(992L - 5299L, QqqiCalc.monthlyBalance(992L, 5299L)) // 負數：每月需補貼
+        assertEquals(500L, QqqiCalc.monthlyBalance(5800L, 5300L))
+    }
+
+    @Test
+    fun loanUsesInvestmentAmountAsPrincipal() {
+        // I = A：貸款金額即投入金額；F 來自股息試算
+        val a = 1_000_000.0
+        val r = QqqiCalc.compute(a, 32.0, 50.0, 0.5)!!             // C = 625 股、E = 312.5 USD、F = 10000 NT
+        assertEquals(625L, r.shares)
+        assertEquals(10000L, r.monthlyNt)
+        val l = QqqiCalc.loanPayment(a, 2.5, 240)!!                 // 5299
+        assertEquals(10000L - 5299L, QqqiCalc.monthlyBalance(r.monthlyNt, l)) // M = 4701
+    }
 }
