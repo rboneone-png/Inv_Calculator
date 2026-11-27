@@ -42,6 +42,13 @@ object VersionNotes {
 
     val entries = listOf(
         Entry(
+            "1.2.3",
+            listOf(
+                "QQQI 分頁：新增 O 美國預扣稅率（預設 30%）、N 月預扣稅股息 = F × O、P 年預扣總額 = (F − N) × 0.95 × 12（皆四捨五入）",
+                "貸款估算的預設值：J 利率 4%、K 期數 84 個月"
+            )
+        ),
+        Entry(
             "1.2.2",
             listOf("QQQI 分頁：「年利息（NT）」名稱改為「年股息（NT）」，計算方式不變（G = F × 12，四捨五入）")
         ),
