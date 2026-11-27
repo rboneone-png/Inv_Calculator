@@ -175,7 +175,7 @@ fun QqqiTab() {
                     ResultRow("C　股數（股）", "${fmtInt(r.shares)} 股", "C = A ÷ H ÷ B，小數點捨去")
                     ResultRow("E　月股息收入（USD）", "US$ " + String.format(Locale.US, "%,.2f", r.monthlyUsd), "E = C × D")
                     ResultRow("F　月股息收入（NT）", fmtNt(r.monthlyNt), "F = E × H，小數點四捨五入")
-                    ResultRow("G　年利息（NT）", fmtNt(r.yearlyNt), "G = F × 12，小數點四捨五入", highlight = true)
+                    ResultRow("G　年股息（NT）", fmtNt(r.yearlyNt), "G = F × 12，小數點四捨五入", highlight = true)
                     Text(
                         "實際買入約 NT$ ${String.format(Locale.US, "%,.0f", r.investedNt)}" +
                             "（${fmtInt(r.shares)} 股，零頭約 NT$ ${String.format(Locale.US, "%,.0f", (a ?: 0.0) - r.investedNt)} 未使用）",
