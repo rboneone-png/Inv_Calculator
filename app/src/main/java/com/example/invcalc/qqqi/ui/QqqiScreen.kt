@@ -144,7 +144,7 @@ fun QqqiTab() {
     val r = if (a != null && b != null && d != null && h != null) QqqiCalc.compute(a, h, b, d) else null
     val o = s.taxText.num()
     val nVal = if (r != null && o != null) QqqiCalc.withholdingNt(r.monthlyNt, o) else null
-    val pVal = if (r != null && nVal != null) QqqiCalc.annualWithheldTotal(r.monthlyNt, nVal) else null
+    val pVal = if (r != null && nVal != null) QqqiCalc.annualWithheldTotal(nVal) else null
 
     ScreenColumn {
         Text("QQQI 股息試算", style = MaterialTheme.typography.titleLarge)
@@ -189,7 +189,7 @@ fun QqqiTab() {
                     ResultRow(
                         "P　年預扣總額（NT）",
                         if (pVal != null) fmtNt(pVal) else "—",
-                        "P = (F − N) × 0.95 × 12，小數點四捨五入",
+                        "P = N × 0.95 × 12，小數點四捨五入",
                         highlight = true
                     )
                     if (nVal == null) {
