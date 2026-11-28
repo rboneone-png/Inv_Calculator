@@ -60,6 +60,7 @@ import com.example.invcalc.stock.StockStore
 import com.example.invcalc.stock.TwNames
 import com.example.invcalc.stock.SymbolUtil
 import com.example.invcalc.stock.YahooApi
+import com.example.invcalc.team.ui.Collapsible
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -791,17 +792,51 @@ private sealed interface ProphetState {
 /** 訓練資料取最近約 5 年（1260 個交易日）的日線收盤價。 */
 private const val PROPHET_TRAIN_BARS = 1260
 
+/** 使用者可調的 Prophet 參數（預設值＝Prophet 內建）。yearly：0 自動、1 開、2 關。 */
+private data class ProphetCfg(
+    val periods: Int = 90,
+    val cps: Double = 0.05,
+    val sps: Double = 10.0,
+    val nCp: Int = 25,
+    val cpRange: Double = 0.8,
+    val interval: Double = 0.8,
+    val yearly: Int = 0,
+    val weekly: Boolean = true
+)
+
+private fun fmtNum(d: Double): String =
+    if (d == d.toLong().toDouble()) d.toLong().toString() else d.toString()
+
 @Composable
 private fun ProphetSection(bars: List<Bar>) {
     var state by remember(bars) { mutableStateOf<ProphetState>(ProphetState.Running) }
+    var cfg by remember { mutableStateOf(ProphetCfg()) }
+    var periodsT by remember { mutableStateOf("90") }
+    var cpsT by remember { mutableStateOf("0.05") }
+    var spsT by remember { mutableStateOf("10") }
+    var nCpT by remember { mutableStateOf("25") }
+    var rangeT by remember { mutableStateOf("0.8") }
+    var intervalT by remember { mutableStateOf("0.8") }
+    var yearlyMode by remember { mutableIntStateOf(0) }
+    var weekly by remember { mutableStateOf(true) }
 
-    LaunchedEffect(bars) {
+    LaunchedEffect(bars, cfg) {
         state = ProphetState.Running
         state = try {
             val recent = bars.takeLast(PROPHET_TRAIN_BARS)
-            // 與 Prophet 的 "auto" 相同：資料跨度 ≥ 2 年才啟用年季節性，週季節性一律啟用；其餘為內建預設值
+            // 年季節性「自動」＝資料跨度 ≥ 2 年才啟用（與 Prophet 的 "auto" 相同）
             val spanDays = recent.last().epochDay - recent.first().epochDay
-            val params = ProphetParams(yearlySeasonality = spanDays >= 730, weeklySeasonality = true)
+            val yearly = when (cfg.yearly) { 1 -> true; 2 -> false; else -> spanDays >= 730 }
+            val params = ProphetParams(
+                periods = cfg.periods,
+                changepointPriorScale = cfg.cps,
+                seasonalityPriorScale = cfg.sps,
+                nChangepoints = cfg.nCp,
+                changepointRange = cfg.cpRange,
+                intervalWidth = cfg.interval,
+                yearlySeasonality = yearly,
+                weeklySeasonality = cfg.weekly
+            )
             val res = withContext(Dispatchers.Default) {
                 Prophet.fit(recent.map { it.epochDay }, recent.map { it.close }, params)
             }
@@ -815,10 +850,57 @@ private fun ProphetSection(bars: List<Bar>) {
 
     SectionCard("7. Prophet 預測") {
         Text(
-            "使用 Facebook Prophet 內建預設參數（changepoint_prior_scale 0.05、seasonality_prior_scale 10、" +
-                "25 個轉折點、轉折點範圍 80%、信賴區間 80%），以近約 5 年日線收盤價訓練，預測未來 90 天內的交易日（不含週六日）。",
+            "以近約 5 年日線收盤價訓練，預測未來的交易日（不含週六日）。下列參數預設為 Facebook Prophet 內建值，可自行調整後按「套用」重新計算。",
             style = MaterialTheme.typography.bodySmall
         )
+        Collapsible(title = "預測參數設定", key = "prophet_params", level = 1, initiallyExpanded = true) {
+            NumField("預測天數（日曆天，預設 90，範圍 1–365）", periodsT) { periodsT = it.filter(Char::isDigit) }
+            NumField("趨勢彈性 changepoint_prior_scale（預設 0.05，範圍 0.001–5）", cpsT) { cpsT = it }
+            NumField("季節性強度 seasonality_prior_scale（預設 10，範圍 0.01–100）", spsT) { spsT = it }
+            NumField("轉折點數量 n_changepoints（預設 25，範圍 0–100）", nCpT) { nCpT = it.filter(Char::isDigit) }
+            NumField("轉折點範圍 changepoint_range（預設 0.8，範圍 0.1–1）", rangeT) { rangeT = it }
+            NumField("信賴區間 interval_width（預設 0.8，範圍 0.5–0.99）", intervalT) { intervalT = it }
+            Text("年季節性（預設：自動）", style = MaterialTheme.typography.bodySmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("自動", "開啟", "關閉").forEachIndexed { i, label ->
+                    FilterChip(selected = yearlyMode == i, onClick = { yearlyMode = i }, label = { Text(label) })
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("週季節性（預設：開啟）", Modifier.weight(1f))
+                Switch(checked = weekly, onCheckedChange = { weekly = it })
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = {
+                        val d = ProphetCfg()
+                        val c = ProphetCfg(
+                            periods = (periodsT.toIntOrNull() ?: d.periods).coerceIn(1, 365),
+                            cps = (cpsT.toDoubleOrNull() ?: d.cps).coerceIn(0.001, 5.0),
+                            sps = (spsT.toDoubleOrNull() ?: d.sps).coerceIn(0.01, 100.0),
+                            nCp = (nCpT.toIntOrNull() ?: d.nCp).coerceIn(0, 100),
+                            cpRange = (rangeT.toDoubleOrNull() ?: d.cpRange).coerceIn(0.1, 1.0),
+                            interval = (intervalT.toDoubleOrNull() ?: d.interval).coerceIn(0.5, 0.99),
+                            yearly = yearlyMode,
+                            weekly = weekly
+                        )
+                        periodsT = c.periods.toString(); cpsT = fmtNum(c.cps); spsT = fmtNum(c.sps)
+                        nCpT = c.nCp.toString(); rangeT = fmtNum(c.cpRange); intervalT = fmtNum(c.interval)
+                        cfg = c
+                    },
+                    modifier = Modifier.weight(1f)
+                ) { Text("套用並重新計算") }
+                OutlinedButton(
+                    onClick = {
+                        val d = ProphetCfg()
+                        periodsT = "90"; cpsT = "0.05"; spsT = "10"; nCpT = "25"; rangeT = "0.8"; intervalT = "0.8"
+                        yearlyMode = 0; weekly = true
+                        cfg = d
+                    },
+                    modifier = Modifier.weight(1f)
+                ) { Text("恢復預設") }
+            }
+        }
         when (val s = state) {
             is ProphetState.Running -> Text("計算中…")
             is ProphetState.Failed -> Text(s.message, color = MaterialTheme.colorScheme.error)
