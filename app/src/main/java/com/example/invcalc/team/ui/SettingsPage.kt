@@ -42,6 +42,13 @@ object VersionNotes {
 
     val entries = listOf(
         Entry(
+            "1.2.6",
+            listOf(
+                "QQQI 分頁：在貸款估算下方新增「QQQI 分析結果」群組，彙整 F 月股息收入、L 每月繳款、M 每月平衡預估-稅前、Q 每月平衡預估-稅後、N 月預扣稅股息",
+                "貸款估算只保留 I、J、K、L；M、Q 改在「QQQI 分析結果」顯示"
+            )
+        ),
+        Entry(
             "1.2.5",
             listOf(
                 "QQQI 分頁：M 改稱「每月平衡預估-稅前（NT）」（M = F − L）",
