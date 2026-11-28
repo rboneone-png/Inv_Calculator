@@ -2,7 +2,10 @@ package com.example.invcalc.stock.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -11,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -19,6 +23,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.key
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -30,6 +35,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -67,7 +77,12 @@ fun StockTab() {
     var stocks by remember { mutableStateOf(store.load()) }
     var selected by rememberSaveable { mutableStateOf<String?>(null) }
     var showAdd by remember { mutableStateOf(false) }
-    var deleteTarget by remember { mutableStateOf<Stock?>(null) }
+    var showDelete by remember { mutableStateOf(false) }
+    var checked by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var dragList by remember { mutableStateOf<List<Stock>?>(null) }
+    var draggingKey by remember { mutableStateOf<String?>(null) }
+    var dragOffset by remember { mutableStateOf(0f) }
+    var itemHeight by remember { mutableStateOf(0f) }
 
     fun update(list: List<Stock>) {
         stocks = list
@@ -92,52 +107,88 @@ fun StockTab() {
     }
 
     ScreenColumn {
-        Button(onClick = { showAdd = true }, modifier = Modifier.fillMaxWidth()) { Text("新增股票") }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = { showAdd = true }, modifier = Modifier.weight(1f)) { Text("新增股票") }
+            OutlinedButton(
+                onClick = { checked = emptySet(); showDelete = true },
+                enabled = stocks.isNotEmpty(),
+                modifier = Modifier.weight(1f)
+            ) { Text("刪除") }
+        }
         if (stocks.isEmpty()) {
             Text(
                 "尚未新增股票。台股輸入數字即可（例如 2330，上櫃請輸入 6488.TWO），美股輸入代號（例如 AAPL）。",
                 style = MaterialTheme.typography.bodyMedium
             )
         } else {
-            Text("點一下查看分析，長按可刪除，▲▼ 可調整順序。", style = MaterialTheme.typography.bodySmall)
+            Text("點一下查看分析，長按後上下拖曳可調整順序。", style = MaterialTheme.typography.bodySmall)
         }
-        stocks.forEachIndexed { index, stock ->
-            Card(
-                Modifier
-                    .fillMaxWidth()
-                    .combinedClickable(
-                        onClick = { selected = stock.symbol },
-                        onLongClick = { deleteTarget = stock }
-                    )
-            ) {
-                Row(
-                    Modifier.padding(start = 16.dp, top = 8.dp, bottom = 8.dp, end = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically
+        val spacingPx = with(LocalDensity.current) { 12.dp.toPx() }
+        (dragList ?: stocks).forEach { stock ->
+            key(stock.symbol) {
+                val isDragging = draggingKey == stock.symbol
+                Card(
+                    Modifier
+                        .fillMaxWidth()
+                        .zIndex(if (isDragging) 1f else 0f)
+                        .graphicsLayer { translationY = if (isDragging) dragOffset else 0f }
+                        .onSizeChanged { itemHeight = it.height.toFloat() }
+                        .pointerInput(stock.symbol) {
+                            detectDragGesturesAfterLongPress(
+                                onDragStart = {
+                                    draggingKey = stock.symbol
+                                    dragOffset = 0f
+                                    dragList = stocks
+                                },
+                                onDrag = { change, amount ->
+                                    change.consume()
+                                    dragOffset += amount.y
+                                    val list = dragList
+                                    if (list != null) {
+                                        val idx = list.indexOfFirst { it.symbol == stock.symbol }
+                                        val step = itemHeight + spacingPx
+                                        if (dragOffset > step / 2 && idx in 0 until list.size - 1) {
+                                            val m = list.toMutableList()
+                                            m.add(idx + 1, m.removeAt(idx))
+                                            dragList = m
+                                            dragOffset -= step
+                                        } else if (dragOffset < -step / 2 && idx > 0) {
+                                            val m = list.toMutableList()
+                                            m.add(idx - 1, m.removeAt(idx))
+                                            dragList = m
+                                            dragOffset += step
+                                        }
+                                    }
+                                },
+                                onDragEnd = {
+                                    dragList?.let { update(it) }
+                                    dragList = null
+                                    draggingKey = null
+                                    dragOffset = 0f
+                                },
+                                onDragCancel = {
+                                    dragList = null
+                                    draggingKey = null
+                                    dragOffset = 0f
+                                }
+                            )
+                        }
+                        .clickable { selected = stock.symbol }
                 ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            stock.name.ifBlank { stock.symbol },
-                            style = MaterialTheme.typography.titleMedium,
-                            maxLines = 1
-                        )
-                        Text(stock.symbol, style = MaterialTheme.typography.bodySmall)
+                    Row(
+                        Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                stock.name.ifBlank { stock.symbol },
+                                style = MaterialTheme.typography.titleMedium,
+                                maxLines = 1
+                            )
+                            Text(stock.symbol, style = MaterialTheme.typography.bodySmall)
+                        }
+                        Text("≡", style = MaterialTheme.typography.titleLarge)
                     }
-                    TextButton(
-                        enabled = index > 0,
-                        onClick = {
-                            val m = stocks.toMutableList()
-                            m.add(index - 1, m.removeAt(index))
-                            update(m)
-                        }
-                    ) { Text("▲") }
-                    TextButton(
-                        enabled = index < stocks.size - 1,
-                        onClick = {
-                            val m = stocks.toMutableList()
-                            m.add(index + 1, m.removeAt(index))
-                            update(m)
-                        }
-                    ) { Text("▼") }
                 }
             }
         }
@@ -150,18 +201,56 @@ fun StockTab() {
             onAdded = { update(stocks + it); showAdd = false }
         )
     }
-    deleteTarget?.let { target ->
+    if (showDelete) {
         AlertDialog(
-            onDismissRequest = { deleteTarget = null },
-            title = { Text("刪除股票") },
-            text = { Text("確定要刪除「${target.name.ifBlank { target.symbol }}（${target.symbol}）」嗎？") },
-            confirmButton = {
-                TextButton(onClick = {
-                    update(stocks.filter { it.symbol != target.symbol })
-                    deleteTarget = null
-                }) { Text("刪除") }
+            onDismissRequest = { showDelete = false },
+            title = { Text("選擇要刪除的股票") },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                checked = if (checked.size == stocks.size) emptySet() else stocks.map { it.symbol }.toSet()
+                            },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(
+                            checked = checked.size == stocks.size && stocks.isNotEmpty(),
+                            onCheckedChange = null
+                        )
+                        Text("全選", Modifier.padding(start = 8.dp))
+                    }
+                    stocks.forEach { st ->
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    checked = if (st.symbol in checked) checked - st.symbol else checked + st.symbol
+                                }
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Checkbox(checked = st.symbol in checked, onCheckedChange = null)
+                            Text(
+                                "${st.name.ifBlank { st.symbol }}（${st.symbol}）",
+                                Modifier.padding(start = 8.dp)
+                            )
+                        }
+                    }
+                }
             },
-            dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("取消") } }
+            confirmButton = {
+                TextButton(
+                    enabled = checked.isNotEmpty(),
+                    onClick = {
+                        update(stocks.filter { it.symbol !in checked })
+                        checked = emptySet()
+                        showDelete = false
+                    }
+                ) { Text("刪除（${checked.size}）") }
+            },
+            dismissButton = { TextButton(onClick = { showDelete = false }) { Text("取消") } }
         )
     }
 }
