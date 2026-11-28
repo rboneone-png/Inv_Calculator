@@ -220,4 +220,23 @@ class QqqiTest {
         assertEquals(13_669L, l)
         assertEquals(10_000L - 13_669L, QqqiCalc.monthlyBalance(r.monthlyNt, l)) // M = −3,669
     }
+
+    @Test
+    fun monthlyBalanceAfterTax() {
+        // Q = F − N − L
+        assertEquals(992L - 298L - 5299L, QqqiCalc.monthlyBalanceAfterTax(992L, 298L, 5299L)) // −4,605
+        // Q = M − N：稅後平衡 = 稅前平衡 − 月預扣稅股息
+        val f = 10_000L
+        val n = QqqiCalc.withholdingNt(f, QqqiCalc.DEFAULT_TAX_PCT)!!        // 3,000
+        val l = QqqiCalc.loanPayment(1_000_000.0, 4.0, 84)!!                  // 13,669
+        val m = QqqiCalc.monthlyBalance(f, l)                                 // −3,669
+        val q = QqqiCalc.monthlyBalanceAfterTax(f, n, l)                      // −6,669
+        assertEquals(-3_669L, m)
+        assertEquals(-6_669L, q)
+        assertEquals(m - n, q)
+        // 稅率 0% 時，稅後 = 稅前
+        assertEquals(m, QqqiCalc.monthlyBalanceAfterTax(f, QqqiCalc.withholdingNt(f, 0.0)!!, l))
+        // 股息足以支應時為正數
+        assertEquals(1_000L, QqqiCalc.monthlyBalanceAfterTax(10_000L, 3_000L, 6_000L))
+    }
 }
