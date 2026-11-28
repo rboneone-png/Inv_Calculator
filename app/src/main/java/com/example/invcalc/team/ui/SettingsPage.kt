@@ -42,6 +42,10 @@ object VersionNotes {
 
     val entries = listOf(
         Entry(
+            "1.2.9",
+            listOf("上方功能選項改為兩排顯示，不用左右捲動即可看到全部分頁")
+        ),
+        Entry(
             "1.2.8",
             listOf(
                 "股票分析：長按股票後上下拖曳即可調整順序（移除 ▲▼ 按鈕與長按刪除）",

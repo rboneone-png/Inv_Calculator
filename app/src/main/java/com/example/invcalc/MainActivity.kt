@@ -26,7 +26,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
-import androidx.compose.material3.ScrollableTabRow
+import androidx.compose.material3.TabRow
+import androidx.compose.material3.TabRowDefaults
+import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -39,6 +41,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.invcalc.stock.ui.StockTab
 import com.example.invcalc.qqqi.ui.QqqiTab
 import com.example.invcalc.team.ui.TeamPrefs
@@ -74,13 +77,28 @@ fun App() {
             style = MaterialTheme.typography.titleLarge,
             modifier = Modifier.padding(16.dp)
         )
-        ScrollableTabRow(selectedTabIndex = pagerState.currentPage, edgePadding = 8.dp) {
-            tabs.forEachIndexed { i, title ->
-                Tab(
-                    selected = pagerState.currentPage == i,
-                    onClick = { scope.launch { pagerState.animateScrollToPage(i) } },
-                    text = { Text(title) }
-                )
+        // 功能選項分成兩排（每排 4 個）
+        val perRow = (tabs.size + 1) / 2
+        tabs.indices.chunked(perRow).forEach { rowIdx ->
+            val first = rowIdx.first()
+            val inRow = pagerState.currentPage in rowIdx
+            TabRow(
+                selectedTabIndex = if (inRow) pagerState.currentPage - first else 0,
+                indicator = { positions ->
+                    if (inRow) {
+                        TabRowDefaults.SecondaryIndicator(
+                            Modifier.tabIndicatorOffset(positions[pagerState.currentPage - first])
+                        )
+                    }
+                }
+            ) {
+                rowIdx.forEach { i ->
+                    Tab(
+                        selected = pagerState.currentPage == i,
+                        onClick = { scope.launch { pagerState.animateScrollToPage(i) } },
+                        text = { Text(tabs[i], maxLines = 1, fontSize = 13.sp) }
+                    )
+                }
             }
         }
         // 左右滑動切換分頁
