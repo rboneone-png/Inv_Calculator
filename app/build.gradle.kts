@@ -12,7 +12,7 @@ android {
         minSdk = 24
         targetSdk = 34
         versionCode = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
-        versionName = "1.2.4"
+        versionName = "1.2.5"
     }
 
     // 固定 debug 簽名，確保每次編譯的 APK 都能直接覆蓋更新

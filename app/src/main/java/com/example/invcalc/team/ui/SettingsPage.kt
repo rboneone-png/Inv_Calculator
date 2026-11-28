@@ -42,6 +42,13 @@ object VersionNotes {
 
     val entries = listOf(
         Entry(
+            "1.2.5",
+            listOf(
+                "QQQI 分頁：M 改稱「每月平衡預估-稅前（NT）」（M = F − L）",
+                "新增 Q「每月平衡預估-稅後（NT）」（Q = F − N − L）"
+            )
+        ),
+        Entry(
             "1.2.4",
             listOf("QQQI 分頁：更正 P 年預扣總額的公式為 P = N × 0.95 × 12（小數點四捨五入）")
         ),

@@ -156,7 +156,7 @@ object QqqiCalc {
         return pay.setScale(0, RoundingMode.HALF_UP).toLong()
     }
 
-    /** M 每月平衡預估 = F（每月股息收入 NT）− L（每月繳款）。負數代表每月需自行補貼。 */
+    /** M 每月平衡預估-稅前 = F（每月股息收入 NT）− L（每月繳款）。負數代表每月需自行補貼。 */
     fun monthlyBalance(monthlyDividendNt: Long, monthlyPaymentNt: Long): Long = monthlyDividendNt - monthlyPaymentNt
 
     /** P 公式中的係數。 */
@@ -177,4 +177,8 @@ object QqqiCalc {
     fun annualWithheldTotal(withholdingNt: Long): Long =
         BigDecimal(withholdingNt).multiply(BigDecimal(P_FACTOR)).multiply(BigDecimal(12))
             .setScale(0, RoundingMode.HALF_UP).toLong()
+
+    /** Q 每月平衡預估-稅後 = F − N − L（每月股息收入 − 月預扣稅股息 − 每月繳款）。 */
+    fun monthlyBalanceAfterTax(monthlyDividendNt: Long, withholdingNt: Long, monthlyPaymentNt: Long): Long =
+        monthlyDividendNt - withholdingNt - monthlyPaymentNt
 }

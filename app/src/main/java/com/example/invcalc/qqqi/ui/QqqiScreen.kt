@@ -115,6 +115,9 @@ object QqqiSession {
 private fun fmtInt(v: Long) = String.format(Locale.US, "%,d", v)
 private fun fmtNt(v: Long) = "NT$ " + fmtInt(v)
 
+/** 正數顯示 NT$ +1,234，負數顯示 -NT$ 1,234。 */
+private fun fmtSigned(v: Long) = if (v >= 0) "NT$ +" + fmtInt(v) else "-NT$ " + fmtInt(-v)
+
 /** 整數金額不顯示小數，否則顯示到小數 2 位。 */
 private fun fmtAmount(v: Double): String =
     if (v == Math.floor(v)) String.format(Locale.US, "%,.0f", v) else String.format(Locale.US, "%,.2f", v)
@@ -226,18 +229,33 @@ fun QqqiTab() {
                 } else if (l != null) {
                     ResultRow("L　每月繳款（NT）", fmtNt(l), "本息平均攤還，小數點四捨五入")
                     if (m != null) {
+                        val okColor = MaterialTheme.colorScheme.primary
+                        val badColor = MaterialTheme.colorScheme.error
                         ResultRow(
-                            "M　每月平衡預估（NT）",
-                            if (m >= 0) "NT$ +" + fmtInt(m) else "-NT$ " + fmtInt(-m),
+                            "M　每月平衡預估-稅前（NT）",
+                            fmtSigned(m),
                             "M = F − L（每月股息收入 − 每月繳款）",
                             highlight = true,
-                            valueColor = if (m >= 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                            valueColor = if (m >= 0) okColor else badColor
+                        )
+                        val q = if (nVal != null && r != null) QqqiCalc.monthlyBalanceAfterTax(r.monthlyNt, nVal, l) else null
+                        ResultRow(
+                            "Q　每月平衡預估-稅後（NT）",
+                            if (q != null) fmtSigned(q) else "—",
+                            "Q = F − N − L（每月股息收入 − 月預扣稅股息 − 每月繳款）",
+                            highlight = true,
+                            valueColor = if (q == null) androidx.compose.ui.graphics.Color.Unspecified else if (q >= 0) okColor else badColor
                         )
                         Text(
-                            if (m >= 0) "每月股息收入足以支應繳款，約結餘 NT$ ${fmtInt(m)}。"
-                            else "每月股息收入不足以支應繳款，每月約需自行補貼 NT$ ${fmtInt(-m)}。",
+                            (if (m >= 0) "稅前：每月股息收入足以支應繳款，約結餘 NT$ ${fmtInt(m)}。"
+                            else "稅前：每月股息收入不足以支應繳款，每月約需自行補貼 NT$ ${fmtInt(-m)}。") +
+                                (if (q == null) "" else if (q >= 0) "\n稅後：扣除預扣稅後仍可支應繳款，約結餘 NT$ ${fmtInt(q)}。"
+                                else "\n稅後：扣除預扣稅後，每月約需自行補貼 NT$ ${fmtInt(-q)}。"),
                             style = MaterialTheme.typography.bodySmall
                         )
+                        if (q == null) {
+                            Text("請輸入 0–100 之間的美國預扣稅率（O），才會計算稅後的 Q。", style = MaterialTheme.typography.bodySmall, color = badColor)
+                        }
                     } else {
                         Text("上方的股息試算尚無有效結果，無法計算每月平衡。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                     }
