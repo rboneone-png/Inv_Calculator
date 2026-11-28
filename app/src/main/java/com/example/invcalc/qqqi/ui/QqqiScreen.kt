@@ -213,6 +213,7 @@ fun QqqiTab() {
         val loanOk = a != null && j != null && k != null && k in 1..1200
         val l = if (loanOk) QqqiCalc.loanPayment(a!!, j!!, k!!) else null
         val m = if (l != null && r != null) QqqiCalc.monthlyBalance(r.monthlyNt, l) else null
+        val q = if (l != null && r != null && nVal != null) QqqiCalc.monthlyBalanceAfterTax(r.monthlyNt, nVal, l) else null
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("貸款估算", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
@@ -238,7 +239,6 @@ fun QqqiTab() {
                             highlight = true,
                             valueColor = if (m >= 0) okColor else badColor
                         )
-                        val q = if (nVal != null && r != null) QqqiCalc.monthlyBalanceAfterTax(r.monthlyNt, nVal, l) else null
                         ResultRow(
                             "Q　每月平衡預估-稅後（NT）",
                             if (q != null) fmtSigned(q) else "—",
@@ -260,6 +260,22 @@ fun QqqiTab() {
                         Text("上方的股息試算尚無有效結果，無法計算每月平衡。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                     }
                 }
+            }
+        }
+
+        // ---------------------------------------------------------------- QQQI 分析結果（彙整）
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("QQQI 分析結果", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                val okColor = MaterialTheme.colorScheme.primary
+                val badColor = MaterialTheme.colorScheme.error
+                val none = androidx.compose.ui.graphics.Color.Unspecified
+                SummaryRow("F　月股息收入（NT）", if (r != null) fmtNt(r.monthlyNt) else "—", none)
+                SummaryRow("L　每月繳款（NT）", if (l != null) fmtNt(l) else "—", none)
+                SummaryRow("M　每月平衡預估-稅前（NT）", if (m != null) fmtSigned(m) else "—", if (m == null) none else if (m >= 0) okColor else badColor)
+                SummaryRow("Q　每月平衡預估-稅後（NT）", if (q != null) fmtSigned(q) else "—", if (q == null) none else if (q >= 0) okColor else badColor)
+                SummaryRow("N　月預扣稅股息（NT）", if (nVal != null) fmtNt(nVal) else "—", none)
+                Text("數值來自上方的股息試算與貸款估算；任一欄位顯示「—」代表該項的輸入尚未完整或無效。", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
 
@@ -310,5 +326,13 @@ private fun ResultRow(
             )
         }
         Text(formula, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun SummaryRow(label: String, value: String, valueColor: androidx.compose.ui.graphics.Color) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+        Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = valueColor)
     }
 }
