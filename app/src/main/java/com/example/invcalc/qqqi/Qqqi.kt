@@ -173,8 +173,8 @@ object QqqiCalc {
             .setScale(0, RoundingMode.HALF_UP).toLong()
     }
 
-    /** P 年預扣總額（NT）= (F − N) × 0.95 × 12，小數點四捨五入（只在最後取整一次）。 */
-    fun annualWithheldTotal(monthlyNt: Long, withholdingNt: Long): Long =
-        BigDecimal(monthlyNt - withholdingNt).multiply(BigDecimal(P_FACTOR)).multiply(BigDecimal(12))
+    /** P 年預扣總額（NT）= N × 0.95 × 12，小數點四捨五入（只在最後取整一次）。 */
+    fun annualWithheldTotal(withholdingNt: Long): Long =
+        BigDecimal(withholdingNt).multiply(BigDecimal(P_FACTOR)).multiply(BigDecimal(12))
             .setScale(0, RoundingMode.HALF_UP).toLong()
 }

@@ -167,34 +167,38 @@ class QqqiTest {
 
     @Test
     fun withholdingAndAnnualTotal() {
-        // F = 992、O = 30% → N = 297.6 → 298；P = (992 − 298) × 0.95 × 12 = 7911.6 → 7912
+        // F = 992、O = 30% → N = 297.6 → 298；P = 298 × 0.95 × 12 = 3397.2 → 3397
         val n = QqqiCalc.withholdingNt(992L, 30.0)!!
         assertEquals(298L, n)
-        assertEquals(7912L, QqqiCalc.annualWithheldTotal(992L, n))
+        assertEquals(3397L, QqqiCalc.annualWithheldTotal(n))
     }
 
     @Test
     fun withholdingRoundsHalfUp() {
-        // N = 5 × 50% = 2.5 → 3；P = (5 − 3) × 0.95 × 12 = 22.8 → 23
+        // N = 5 × 50% = 2.5 → 3（四捨五入）；P = 3 × 0.95 × 12 = 34.2 → 34
         assertEquals(3L, QqqiCalc.withholdingNt(5L, 50.0))
-        assertEquals(23L, QqqiCalc.annualWithheldTotal(5L, 3L))
-        // N = 10 × 5% = 0.5 → 1（銀行家捨入會是 0）；P = (10 − 1) × 0.95 × 12 = 102.6 → 103
+        assertEquals(34L, QqqiCalc.annualWithheldTotal(3L))
+        // N = 10 × 5% = 0.5 → 1（銀行家捨入會是 0）；P = 1 × 11.4 = 11.4 → 11
         assertEquals(1L, QqqiCalc.withholdingNt(10L, 5.0))
-        assertEquals(103L, QqqiCalc.annualWithheldTotal(10L, 1L))
+        assertEquals(11L, QqqiCalc.annualWithheldTotal(1L))
+        // 進位：N = 2 → 22.8 → 23；整除：N = 5 → 57.0 → 57
+        assertEquals(23L, QqqiCalc.annualWithheldTotal(2L))
+        assertEquals(57L, QqqiCalc.annualWithheldTotal(5L))
     }
 
     @Test
     fun annualTotalRoundsOnlyOnce() {
-        // 先乘 12 再取整一次：(F − N) × 0.95 × 12，而不是先把月份取整再乘 12
-        // F = 992、N = 0 → 992 × 11.4 = 11308.8 → 11309（若先把 942.4 取整成 942 再 × 12 = 11304，結果不同）
-        assertEquals(11309L, QqqiCalc.annualWithheldTotal(992L, 0L))
+        // 先乘 12 再取整一次：298 × 11.4 = 3397.2 → 3397
+        // 若先把 298 × 0.95 = 283.1 取整成 283 再 × 12 = 3396，結果不同
+        assertEquals(3397L, QqqiCalc.annualWithheldTotal(298L))
     }
 
     @Test
     fun withholdingEdgeCases() {
         assertEquals(0L, QqqiCalc.withholdingNt(992L, 0.0))        // 不扣稅
         assertEquals(992L, QqqiCalc.withholdingNt(992L, 100.0))    // 全額預扣
-        assertEquals(0L, QqqiCalc.annualWithheldTotal(992L, 992L))
+        assertEquals(0L, QqqiCalc.annualWithheldTotal(0L))         // N = 0 → P = 0
+        assertEquals(11309L, QqqiCalc.annualWithheldTotal(992L))   // 992 × 11.4 = 11308.8 → 11309
         assertNull(QqqiCalc.withholdingNt(992L, -1.0))
         assertNull(QqqiCalc.withholdingNt(992L, 100.1))
         assertNull(QqqiCalc.withholdingNt(992L, Double.NaN))
@@ -205,12 +209,12 @@ class QqqiTest {
     @Test
     fun fullChainWithDefaults() {
         // A = 1,000,000、B = 50、H = 32、D = 0.5 → C = 625、E = 312.5 USD、F = 10,000
-        // 預設 O = 30% → N = 3,000；P = (10,000 − 3,000) × 0.95 × 12 = 79,800
+        // 預設 O = 30% → N = 3,000；P = 3,000 × 0.95 × 12 = 34,200
         val r = QqqiCalc.compute(1_000_000.0, 32.0, 50.0, 0.5)!!
         val n = QqqiCalc.withholdingNt(r.monthlyNt, QqqiCalc.DEFAULT_TAX_PCT)!!
         assertEquals(10_000L, r.monthlyNt)
         assertEquals(3_000L, n)
-        assertEquals(79_800L, QqqiCalc.annualWithheldTotal(r.monthlyNt, n))
+        assertEquals(34_200L, QqqiCalc.annualWithheldTotal(n))
         // 預設 J = 4%、K = 84：100 萬的每月繳款 = 13,668.806… → 13,669（獨立計算驗證）
         val l = QqqiCalc.loanPayment(1_000_000.0, 4.0, 84)!!
         assertEquals(13_669L, l)
