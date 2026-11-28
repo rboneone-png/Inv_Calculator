@@ -42,6 +42,10 @@ object VersionNotes {
 
     val entries = listOf(
         Entry(
+            "1.2.7",
+            listOf("QQQI 分頁：各群組都可展開／收合。「試算結果」與「近 6 次配息明細」預設收合，「輸入與即時資料」「貸款估算」「QQQI 分析結果」預設展開")
+        ),
+        Entry(
             "1.2.6",
             listOf(
                 "QQQI 分頁：在貸款估算下方新增「QQQI 分析結果」群組，彙整 F 月股息收入、L 每月繳款、M 每月平衡預估-稅前、Q 每月平衡預估-稅後、N 月預扣稅股息",

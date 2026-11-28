@@ -25,7 +25,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
 /**
- * 可展開／收合的區塊，預設收合。level 0 為外層卡片，level 1 為卡片內的子區塊。
+ * 可展開／收合的區塊，預設收合（可用 initiallyExpanded 改成預設展開）。level 0 為外層卡片，level 1 為卡片內的子區塊。
  * 內容只在展開時才組合（收合時圖表等重的內容不會被建立）。
  */
 @Composable
@@ -36,9 +36,10 @@ fun Collapsible(
     subtitleColor: Color = Color.Unspecified,
     key: String = title,
     level: Int = 0,
+    initiallyExpanded: Boolean = false,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    var expanded by rememberSaveable(key) { mutableStateOf(false) }
+    var expanded by rememberSaveable(key) { mutableStateOf(initiallyExpanded) }
     val inner: @Composable ColumnScope.() -> Unit = {
         Row(
             Modifier

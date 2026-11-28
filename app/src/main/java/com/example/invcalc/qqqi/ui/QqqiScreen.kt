@@ -156,109 +156,118 @@ fun QqqiTab() {
             style = MaterialTheme.typography.bodySmall
         )
 
-        // ---------------------------------------------------------------- 輸入與即時資料
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                NumField("A　投入金額（NT）", s.amountText) { s.amountText = it }
-                NumField("B　QQQI 股價（USD，自動取得，可修改）", s.priceText) { s.priceText = it }
-                NumField("H　匯率（USD → NT，取不到時預設 32）", s.fxText) { s.fxText = it }
-                NumField("D　月股息・平均值（USD，近 6 個月配息平均）", s.divText) { s.divText = it }
-                NumField("O　美國預扣稅率（%，預設 30）", s.taxText) { s.taxText = it }
-                if (s.fxNote.isNotBlank()) Text(s.fxNote, style = MaterialTheme.typography.bodySmall)
-                if (s.status.isNotBlank()) Text(s.status, style = MaterialTheme.typography.bodySmall)
-                if (s.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
-                Button(onClick = { s.refresh() }, enabled = !s.loading, modifier = Modifier.fillMaxWidth()) {
-                    Text(if (s.loading) "取得中…" else "重新取得最新資料")
-                }
+        // ---------------------------------------------------------------- 輸入與即時資料（預設展開）
+        Collapsible(
+            "輸入與即時資料",
+            subtitle = if (s.loading) "取得資料中…" else s.status.ifBlank { null },
+            key = "qqqi:input",
+            initiallyExpanded = true
+        ) {
+            NumField("A　投入金額（NT）", s.amountText) { s.amountText = it }
+            NumField("B　QQQI 股價（USD，自動取得，可修改）", s.priceText) { s.priceText = it }
+            NumField("H　匯率（USD → NT，取不到時預設 32）", s.fxText) { s.fxText = it }
+            NumField("D　月股息・平均值（USD，近 6 個月配息平均）", s.divText) { s.divText = it }
+            NumField("O　美國預扣稅率（%，預設 30）", s.taxText) { s.taxText = it }
+            if (s.fxNote.isNotBlank()) Text(s.fxNote, style = MaterialTheme.typography.bodySmall)
+            if (s.status.isNotBlank()) Text(s.status, style = MaterialTheme.typography.bodySmall)
+            if (s.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
+            Button(onClick = { s.refresh() }, enabled = !s.loading, modifier = Modifier.fillMaxWidth()) {
+                Text(if (s.loading) "取得中…" else "重新取得最新資料")
             }
         }
 
-        // ---------------------------------------------------------------- 試算結果
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("試算結果", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                if (r == null) {
-                    Text("請輸入有效數字：投入金額需 ≥ 0，股價與匯率需 > 0，月股息需 ≥ 0。", color = MaterialTheme.colorScheme.error)
-                } else {
-                    ResultRow("C　股數（股）", "${fmtInt(r.shares)} 股", "C = A ÷ H ÷ B，小數點捨去")
-                    ResultRow("E　月股息收入（USD）", "US$ " + String.format(Locale.US, "%,.2f", r.monthlyUsd), "E = C × D")
-                    ResultRow("F　月股息收入（NT）", fmtNt(r.monthlyNt), "F = E × H，小數點四捨五入")
-                    ResultRow(
-                        "N　月預扣稅股息（NT）",
-                        if (nVal != null) fmtNt(nVal) else "—",
-                        "N = F × O，小數點四捨五入"
-                    )
-                    ResultRow("G　年股息（NT）", fmtNt(r.yearlyNt), "G = F × 12，小數點四捨五入", highlight = true)
-                    ResultRow(
-                        "P　年預扣總額（NT）",
-                        if (pVal != null) fmtNt(pVal) else "—",
-                        "P = N × 0.95 × 12，小數點四捨五入",
-                        highlight = true
-                    )
-                    if (nVal == null) {
-                        Text("請輸入 0–100 之間的美國預扣稅率（O），才會計算 N 與 P。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-                    }
-                    Text(
-                        "實際買入約 NT$ ${String.format(Locale.US, "%,.0f", r.investedNt)}" +
-                            "（${fmtInt(r.shares)} 股，零頭約 NT$ ${String.format(Locale.US, "%,.0f", (a ?: 0.0) - r.investedNt)} 未使用）",
-                        style = MaterialTheme.typography.bodySmall
-                    )
+        // ---------------------------------------------------------------- 試算結果（預設收合）
+        Collapsible(
+            "試算結果",
+            subtitle = if (r != null) "C ${fmtInt(r.shares)} 股・F ${fmtNt(r.monthlyNt)}・G ${fmtNt(r.yearlyNt)}" else "請檢查輸入",
+            key = "qqqi:result",
+            initiallyExpanded = false
+        ) {
+            if (r == null) {
+                Text("請輸入有效數字：投入金額需 ≥ 0，股價與匯率需 > 0，月股息需 ≥ 0。", color = MaterialTheme.colorScheme.error)
+            } else {
+                ResultRow("C　股數（股）", "${fmtInt(r.shares)} 股", "C = A ÷ H ÷ B，小數點捨去")
+                ResultRow("E　月股息收入（USD）", "US$ " + String.format(Locale.US, "%,.2f", r.monthlyUsd), "E = C × D")
+                ResultRow("F　月股息收入（NT）", fmtNt(r.monthlyNt), "F = E × H，小數點四捨五入")
+                ResultRow(
+                    "N　月預扣稅股息（NT）",
+                    if (nVal != null) fmtNt(nVal) else "—",
+                    "N = F × O，小數點四捨五入"
+                )
+                ResultRow("G　年股息（NT）", fmtNt(r.yearlyNt), "G = F × 12，小數點四捨五入", highlight = true)
+                ResultRow(
+                    "P　年預扣總額（NT）",
+                    if (pVal != null) fmtNt(pVal) else "—",
+                    "P = N × 0.95 × 12，小數點四捨五入",
+                    highlight = true
+                )
+                if (nVal == null) {
+                    Text("請輸入 0–100 之間的美國預扣稅率（O），才會計算 N 與 P。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                 }
+                Text(
+                    "實際買入約 NT$ ${String.format(Locale.US, "%,.0f", r.investedNt)}" +
+                        "（${fmtInt(r.shares)} 股，零頭約 NT$ ${String.format(Locale.US, "%,.0f", (a ?: 0.0) - r.investedNt)} 未使用）",
+                    style = MaterialTheme.typography.bodySmall
+                )
             }
         }
 
-        // ---------------------------------------------------------------- 貸款估算
+        // ---------------------------------------------------------------- 貸款估算（預設展開）
         val j = s.rateText.num()
         val k = s.monthsText.toIntOrNull()
         val loanOk = a != null && j != null && k != null && k in 1..1200
         val l = if (loanOk) QqqiCalc.loanPayment(a!!, j!!, k!!) else null
         val m = if (l != null && r != null) QqqiCalc.monthlyBalance(r.monthlyNt, l) else null
         val q = if (l != null && r != null && nVal != null) QqqiCalc.monthlyBalanceAfterTax(r.monthlyNt, nVal, l) else null
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("貸款估算", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                Text("假設以貸款方式取得投入金額，用每月股息收入來支應每月繳款。", style = MaterialTheme.typography.bodySmall)
-                ResultRow(
-                    "I　貸款金額（NT）",
-                    if (a != null) "NT$ " + fmtAmount(a) else "—",
-                    "I = A（同投入金額）"
-                )
-                NumField("J　利率（年利率 %）", s.rateText) { s.rateText = it }
-                OutlinedMonths(s.monthsText) { s.monthsText = it }
-                if (!loanOk) {
-                    Text("請輸入利率（≥ 0）與貸款期數（1–1200 個月的整數），才會計算每月繳款。", style = MaterialTheme.typography.bodySmall)
-                } else if (l != null) {
-                    ResultRow("L　每月繳款（NT）", fmtNt(l), "本息平均攤還，小數點四捨五入")
-                }
+        Collapsible(
+            "貸款估算",
+            subtitle = if (l != null) "L 每月繳款 ${fmtNt(l)}" else null,
+            key = "qqqi:loan",
+            initiallyExpanded = true
+        ) {
+            Text("假設以貸款方式取得投入金額，用每月股息收入來支應每月繳款。", style = MaterialTheme.typography.bodySmall)
+            ResultRow(
+                "I　貸款金額（NT）",
+                if (a != null) "NT$ " + fmtAmount(a) else "—",
+                "I = A（同投入金額）"
+            )
+            NumField("J　利率（年利率 %）", s.rateText) { s.rateText = it }
+            OutlinedMonths(s.monthsText) { s.monthsText = it }
+            if (!loanOk) {
+                Text("請輸入利率（≥ 0）與貸款期數（1–1200 個月的整數），才會計算每月繳款。", style = MaterialTheme.typography.bodySmall)
+            } else if (l != null) {
+                ResultRow("L　每月繳款（NT）", fmtNt(l), "本息平均攤還，小數點四捨五入")
             }
         }
 
-        // ---------------------------------------------------------------- QQQI 分析結果（彙整）
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("QQQI 分析結果", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                val okColor = MaterialTheme.colorScheme.primary
-                val badColor = MaterialTheme.colorScheme.error
-                val none = androidx.compose.ui.graphics.Color.Unspecified
-                SummaryRow("F　月股息收入（NT）", if (r != null) fmtNt(r.monthlyNt) else "—", none)
-                SummaryRow("L　每月繳款（NT）", if (l != null) fmtNt(l) else "—", none)
-                SummaryRow("M　每月平衡預估-稅前（NT）", if (m != null) fmtSigned(m) else "—", if (m == null) none else if (m >= 0) okColor else badColor)
-                SummaryRow("Q　每月平衡預估-稅後（NT）", if (q != null) fmtSigned(q) else "—", if (q == null) none else if (q >= 0) okColor else badColor)
-                SummaryRow("N　月預扣稅股息（NT）", if (nVal != null) fmtNt(nVal) else "—", none)
-                if (m != null) {
-                    Text(
-                        (if (m >= 0) "稅前：每月股息收入足以支應繳款，約結餘 NT$ ${fmtInt(m)}。"
-                        else "稅前：每月股息收入不足以支應繳款，每月約需自行補貼 NT$ ${fmtInt(-m)}。") +
-                            (if (q == null) "" else if (q >= 0) "\n稅後：扣除預扣稅後仍可支應繳款，約結餘 NT$ ${fmtInt(q)}。"
-                            else "\n稅後：扣除預扣稅後，每月約需自行補貼 NT$ ${fmtInt(-q)}。"),
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
-                if (r != null && nVal == null) {
-                    Text("請輸入 0–100 之間的美國預扣稅率（O），才會計算 N 與稅後的 Q。", style = MaterialTheme.typography.bodySmall, color = badColor)
-                }
-                Text("M = F − L、Q = F − N − L。數值來自上方的股息試算與貸款估算；任一欄位顯示「—」代表該項的輸入尚未完整或無效。", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        // ---------------------------------------------------------------- QQQI 分析結果（彙整，預設展開）
+        Collapsible(
+            "QQQI 分析結果",
+            subtitle = if (m != null && q != null) "M ${fmtSigned(m)}・Q ${fmtSigned(q)}" else null,
+            key = "qqqi:summary",
+            initiallyExpanded = true
+        ) {
+            val okColor = MaterialTheme.colorScheme.primary
+            val badColor = MaterialTheme.colorScheme.error
+            val none = androidx.compose.ui.graphics.Color.Unspecified
+            SummaryRow("F　月股息收入（NT）", if (r != null) fmtNt(r.monthlyNt) else "—", none)
+            SummaryRow("L　每月繳款（NT）", if (l != null) fmtNt(l) else "—", none)
+            SummaryRow("M　每月平衡預估-稅前（NT）", if (m != null) fmtSigned(m) else "—", if (m == null) none else if (m >= 0) okColor else badColor)
+            SummaryRow("Q　每月平衡預估-稅後（NT）", if (q != null) fmtSigned(q) else "—", if (q == null) none else if (q >= 0) okColor else badColor)
+            SummaryRow("N　月預扣稅股息（NT）", if (nVal != null) fmtNt(nVal) else "—", none)
+            if (m != null) {
+                Text(
+                    (if (m >= 0) "稅前：每月股息收入足以支應繳款，約結餘 NT$ ${fmtInt(m)}。"
+                    else "稅前：每月股息收入不足以支應繳款，每月約需自行補貼 NT$ ${fmtInt(-m)}。") +
+                        (if (q == null) "" else if (q >= 0) "\n稅後：扣除預扣稅後仍可支應繳款，約結餘 NT$ ${fmtInt(q)}。"
+                        else "\n稅後：扣除預扣稅後，每月約需自行補貼 NT$ ${fmtInt(-q)}。"),
+                    style = MaterialTheme.typography.bodySmall
+                )
             }
+            if (r != null && nVal == null) {
+                Text("請輸入 0–100 之間的美國預扣稅率（O），才會計算 N 與稅後的 Q。", style = MaterialTheme.typography.bodySmall, color = badColor)
+            }
+            Text("M = F − L、Q = F − N − L。數值來自上方的股息試算與貸款估算；任一欄位顯示「—」代表該項的輸入尚未完整或無效。", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
 
         // ---------------------------------------------------------------- 配息明細
@@ -266,7 +275,8 @@ fun QqqiTab() {
         Collapsible(
             "近 ${QqqiApi.AVG_COUNT} 次配息明細",
             subtitle = if (last.isEmpty()) "尚無資料" else "共 ${last.size} 筆，平均 US$ ${QqqiCalc.plain(QqqiApi.averageDividend(last) ?: 0.0, 4)}",
-            key = "qqqi:dividends"
+            key = "qqqi:dividends",
+            initiallyExpanded = false
         ) {
             if (last.isEmpty()) {
                 Text("沒有取得配息資料，請按「重新取得最新資料」，或在上方手動輸入月股息。", style = MaterialTheme.typography.bodyMedium)
