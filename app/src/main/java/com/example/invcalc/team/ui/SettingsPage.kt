@@ -42,6 +42,10 @@ object VersionNotes {
 
     val entries = listOf(
         Entry(
+            "1.2.10",
+            listOf("股票分析 Prophet 預測：開放參數讓使用者輸入（預測天數、趨勢彈性、季節性強度、轉折點數量與範圍、信賴區間、年／週季節性），可一鍵恢復預設")
+        ),
+        Entry(
             "1.2.9",
             listOf("上方功能選項改為兩排顯示，不用左右捲動即可看到全部分頁")
         ),
